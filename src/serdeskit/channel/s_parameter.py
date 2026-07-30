@@ -1,13 +1,15 @@
-"""SParameterChannel: loads a Touchstone-described channel via scikit-rf and
-exposes its differential S21 and impulse response. Actually filtering a
-Signal through it (satisfying the Channel protocol's `process`) is a later
-step, once eye extraction knows what to do with a non-zero channel delay.
+"""SParameterChannel: loads a Touchstone-described channel via scikit-rf,
+exposes its differential S21 and impulse response, and filters a Signal
+through it (satisfying serdeskit.link.Channel's `process`).
 """
 from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
 import skrf
+from scipy.signal import fftconvolve
+
+from serdeskit.common.types import Signal
 
 
 class SParameterChannel:
@@ -85,3 +87,72 @@ class SParameterChannel:
             n = round(1.0 / (dt * df))
         t, h = network.impulse_response(window=None, n=n, bandpass=False)
         return np.asarray(t, dtype=np.float64), np.asarray(h[:, 1, 0], dtype=np.float64)
+
+    def process(self, sig: Signal) -> Signal:
+        """Convolve `sig` through this channel's impulse response.
+
+        `impulse_response()`'s output is centered on t=0 (scikit-rf
+        fftshifts it) and, unwindowed, has non-negligible Gibbs-ringing
+        energy well before the main peak — neither MATLAB's `imp` (plain
+        `ifft`, causal from index 0) nor a raw convolution kernel can use it
+        as-is. `_trim_impulse` (a port of PyBERT's `trim_impulse`)
+        re-centers it on the main lobe and keeps only the window capturing
+        99.9% of the response's derivative energy, returning that window's
+        delay relative to t=0 — which becomes part of the output Signal's
+        `t0`, so callers never have to track the channel's group delay by
+        hand (see Signal.t0's own docstring for why that matters).
+
+        `mode="valid"`: a 'full' convolution's first/last `len(h_trimmed)-1`
+        samples are where the kernel only partially overlaps real input
+        (implicitly zero-padded) — the channel's response to data that
+        hasn't started yet/has already ended, not steady-state ISI. 'valid'
+        drops exactly that non-representative region on both ends (matching
+        what MATLAB's `channel_data.m` does by hand, skipping a hardcoded
+        55/500 symbols before plotting its eye) rather than leaving it in
+        for eye extraction to slice into a handful of misleading traces.
+        """
+        dt = 1.0 / sig.fs
+        _, h = self.impulse_response(dt=dt)
+        h_trimmed, delay_samples = _trim_impulse(h)
+        out = np.asarray(fftconvolve(sig.samples, h_trimmed, mode="valid"), dtype=np.float64)
+        t0 = sig.t0 + (delay_samples + len(h_trimmed) - 1) * dt
+        return Signal(samples=out, fs=sig.fs, t0=t0)
+
+
+def _trim_impulse(
+    h: npt.NDArray[np.float64], kept_energy: float = 0.999
+) -> tuple[npt.NDArray[np.float64], int]:
+    """Port of PyBERT's trim_impulse (utility/sigproc.py): re-center a
+    possibly fftshift-centered impulse response on its main lobe, then keep
+    only the window capturing `kept_energy` of the total first-derivative
+    energy — discards the near-zero (or, unwindowed, Gibbs-ringing) tails on
+    both sides without losing real precursor/postcursor ISI content.
+
+    Returns (trimmed_h, start_offset): `start_offset` is the returned
+    window's first sample's position, in samples, relative to the input
+    array's own t=0 (its center, since impulse_response() is fftshift-ed) —
+    i.e. the channel's group delay in samples, which can be negative
+    (nonzero front porch before the main lobe).
+    """
+    n = len(h)
+    half = n // 2
+    if np.argmax(np.abs(h)) < n // 4:
+        h = np.roll(h, half)
+
+    diff_h = np.diff(h)
+    total_energy = np.sum(diff_h**2)
+    half_residual = 0.5 * (1 - kept_energy)
+    e_beg_target = half_residual * total_energy
+    e_end_target = (1 - half_residual) * total_energy
+
+    ix_beg = 0
+    energy = 0.0
+    while energy < e_beg_target and ix_beg < n - 1:
+        energy += diff_h[ix_beg] ** 2
+        ix_beg += 1
+    ix_end = ix_beg
+    while energy < e_end_target and ix_end < n - 1:
+        energy += diff_h[ix_end] ** 2
+        ix_end += 1
+
+    return h[ix_beg:ix_end], ix_beg - half
