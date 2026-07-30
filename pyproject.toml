@@ -15,11 +15,16 @@ dev = [
     "mypy>=1.10",
     "pytest>=8.0",
     "ruff>=0.5",
+    "scipy-stubs>=1.12",
 ]
 
 [tool.mypy]
 strict = true
 files = ["src", "tests", "examples"]
+
+[[tool.mypy.overrides]]
+module = "skrf.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

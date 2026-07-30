@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 from matplotlib.axes import Axes
 
+from serdeskit.channel import SParameterChannel
 from serdeskit.link import EyeData
 
 
@@ -22,4 +24,53 @@ def plot_eye(eye: EyeData, ax: Axes | None = None, title: str = "Eye Diagram") -
     ax.set_xlabel("Time (ps)")
     ax.set_ylabel("Amplitude")
     ax.set_title(title)
+    ax.grid(True)
+    return ax
+
+
+def plot_s21(
+    channel: SParameterChannel,
+    freq: npt.NDArray[np.float64],
+    ax: Axes | None = None,
+    title: str = "S21",
+) -> Axes:
+    """Plot |S21| (dB) vs. frequency (GHz) on `ax` (a new Axes if none given)."""
+    if ax is None:
+        _, ax = plt.subplots()
+
+    s21 = channel.s21(freq)
+    mag_db = 20 * np.log10(np.abs(s21))
+    ax.plot(freq / 1e9, mag_db, color="steelblue")
+    ax.set_xlabel("Frequency (GHz)")
+    ax.set_ylabel("S21 (dB)")
+    ax.set_title(title)
+    ax.grid(True)
+    return ax
+
+
+def plot_impulse_response(
+    channel: SParameterChannel,
+    ax: Axes | None = None,
+    title: str = "Impulse Response",
+    dt: float | None = None,
+    xlim: tuple[float, float] | None = None,
+) -> Axes:
+    """Plot the channel's impulse response (time in ns, amplitude in mV) on
+    `ax` (a new Axes if none given). `dt` is passed straight through to
+    SParameterChannel.impulse_response() — see its docstring: peak
+    amplitude isn't comparable across different `dt`. `xlim` is (start,
+    stop) in seconds (SI, matching every other time value in this codebase),
+    e.g. to zoom in on the main peak.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    t, h = channel.impulse_response(dt=dt)
+    ax.plot(t * 1e9, h * 1e3, color="steelblue")
+    ax.set_xlabel("Time (ns)")
+    ax.set_ylabel("Impulse response (mV)")
+    ax.set_title(title)
+    ax.grid(True)
+    if xlim is not None:
+        ax.set_xlim(xlim[0] * 1e9, xlim[1] * 1e9)
     return ax
