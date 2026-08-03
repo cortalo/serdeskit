@@ -16,6 +16,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
     "scipy-stubs>=1.12",
+    "pychopmarg==3.1.2",  # golden reference for COM-related unit tests (e.g. pmf/)
 ]
 
 [tool.mypy]
