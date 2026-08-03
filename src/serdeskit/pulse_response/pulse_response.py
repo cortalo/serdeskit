@@ -102,6 +102,81 @@ class PulseResponse(Signal):
         cursor_value = self.samples[self.cursor_index]
         return float(rlm * cursor_value / (levels - 1))
 
+    def residual_isi(
+        self,
+        dfe_min: npt.NDArray[np.float64],
+        dfe_max: npt.NDArray[np.float64],
+        n_pre_ui: int = 5,
+        n_post_ui: int = 2048,
+    ) -> npt.NDArray[np.float64]:
+        """(93A-26)/(93A-27): the intersymbol interference left over after
+        the DFE cancels what it can — one value per UI, ready to hand to
+        `pmf.delta_pmf` as its `h_samples`.
+
+        Three things happen here. The pulse response is sampled once per
+        UI (on the cursor's own sub-UI phase, so the cursor sample is
+        included exactly); the cursor's own UI is zeroed, since that's
+        the signal being detected rather than interference; and over the
+        UI the DFE spans, each tap's value is set to what it would need
+        to cancel that UI's ISI, clipped to [dfe_min, dfe_max] (93A-26),
+        and subtracted (93A-27) — leaving only what a real, range-limited
+        DFE can't remove.
+
+        Args:
+            dfe_min: Per-tap lower limits on DFE tap weight, normalized
+                to the cursor value. Note this argument carries two
+                things: the limits themselves, and — via its length —
+                how many post-cursor UI the DFE spans. The tap weights
+                are not passed in at all; they're derived here, per
+                (93A-26).
+            dfe_max: Per-tap upper limits; must be the same length as
+                `dfe_min`.
+            n_pre_ui: How many pre-cursor UI to include, clamped to how
+                many actually precede the cursor. Default: 5.
+            n_post_ui: How many post-cursor UI to include. Default: 2048.
+
+        Returns:
+            Residual ISI, volts, one entry per included UI, ordered
+            earliest first (so the cursor's own zeroed entry sits at
+            index `min(n_pre_ui, cursor UI index)`).
+
+        Raises:
+            ValueError: `dfe_min` and `dfe_max` differ in length. Only
+                `dfe_min`'s length sets the DFE's span, so a longer
+                `dfe_min` would otherwise broadcast silently — every tap
+                sharing one upper limit, no error, wrong answer.
+        """
+        if len(dfe_min) != len(dfe_max):
+            raise ValueError(
+                f"dfe_min and dfe_max must be the same length (one entry per DFE "
+                f"tap), got {len(dfe_min)} and {len(dfe_max)}."
+            )
+
+        nspui = self.samples_per_ui
+        cursor_ui, cursor_phase = divmod(self.cursor_index, nspui)
+        cursor_value = self.samples[self.cursor_index]
+
+        # Sample on the cursor's own sub-UI phase, so its sample is hit
+        # exactly rather than approached.
+        per_ui = self.samples[cursor_phase::nspui]
+
+        n_pre = min(n_pre_ui, cursor_ui)
+        # TODO: this window (n_pre <= 5 pre-cursor UI, n_post_ui = 2048
+        # post-cursor) follows PyChOpMarg, whose own comment flags it as
+        # "Inconsistent w/ IEEE 802.3-22, but consistent w/ v2.60 of MATLAB
+        # code." Kept for golden-test comparability; revisit alongside the
+        # other documented PyChOpMarg-vs-standard divergences if this
+        # project ever needs to match the published text instead.
+        h_isi = per_ui[cursor_ui - n_pre : cursor_ui + n_post_ui].copy()
+
+        h_isi[n_pre] = 0.0  # the cursor is signal, not interference
+
+        dfe = slice(n_pre + 1, n_pre + 1 + len(dfe_min))
+        tap_weights = np.clip(h_isi[dfe] / cursor_value, dfe_min, dfe_max)  # (93A-26)
+        h_isi[dfe] -= tap_weights * cursor_value  # (93A-27)
+
+        return np.asarray(h_isi, dtype=np.float64)
+
     def local_slopes(
         self, signal_amplitude: float, threshold: float = 0.001
     ) -> npt.NDArray[np.float64]:
