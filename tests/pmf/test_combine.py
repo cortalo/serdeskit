@@ -43,6 +43,43 @@ def test_output_is_normalized() -> None:
     assert combined.sum() == pytest.approx(1.0)
 
 
+def test_combining_three_matches_delta_pmf_folding_all_together() -> None:
+    """Extends the two-way cross-check above to three sources:
+    `delta_pmf([h1, h2, h3])` folds all three h_samples together
+    internally (93A-40); `combine_pmfs(a, b, c)` must reach the same
+    answer built from three independently-computed PMFs — an
+    independently-computed ground truth, not just a check that the
+    variadic form agrees with its own pairwise reduction.
+    """
+    levels = 2
+    y = _grid(max_y=0.15, npts=2001)
+    h1, h2, h3 = 0.05, -0.02, 0.01
+
+    expected = delta_pmf(np.array([h1, h2, h3]), levels, y)
+
+    a = delta_pmf(np.array([h1]), levels, y)
+    b = delta_pmf(np.array([h2]), levels, y)
+    c = delta_pmf(np.array([h3]), levels, y)
+    actual = combine_pmfs(a, b, c)
+
+    np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_single_pmf_is_returned_unchanged() -> None:
+    """The sum of one random variable is just that variable — combining a
+    single PMF is a no-op, which matters once this is called with however
+    many crosstalk aggressors happen to be configured, including zero
+    extra ones beyond a single source.
+    """
+    levels = 2
+    y = _grid(max_y=0.15, npts=2001)
+    a = delta_pmf(np.array([0.05]), levels, y)
+
+    combined = combine_pmfs(a)
+
+    np.testing.assert_allclose(combined, a)
+
+
 def test_hand_verifiable_combination() -> None:
     """Combine two hand-picked, independent distributions on a tiny 7-point
     grid (center index 3) and check every resulting value against a

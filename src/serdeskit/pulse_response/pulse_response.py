@@ -31,6 +31,10 @@ class PulseResponse(Signal):
     def samples_per_ui(self) -> int:
         return round(self.ui * self.fs)
 
+    @property
+    def cursor_value(self) -> float:
+        return float(self.samples[self.cursor_index])
+
     @classmethod
     def from_signal(
         cls,
@@ -99,8 +103,7 @@ class PulseResponse(Signal):
         Returns:
             As, volts.
         """
-        cursor_value = self.samples[self.cursor_index]
-        return float(rlm * cursor_value / (levels - 1))
+        return float(rlm * self.cursor_value / (levels - 1))
 
     def residual_isi(
         self,
@@ -154,7 +157,6 @@ class PulseResponse(Signal):
 
         nspui = self.samples_per_ui
         cursor_ui, cursor_phase = divmod(self.cursor_index, nspui)
-        cursor_value = self.samples[self.cursor_index]
 
         # Sample on the cursor's own sub-UI phase, so its sample is hit
         # exactly rather than approached.
@@ -172,8 +174,8 @@ class PulseResponse(Signal):
         h_isi[n_pre] = 0.0  # the cursor is signal, not interference
 
         dfe = slice(n_pre + 1, n_pre + 1 + len(dfe_min))
-        tap_weights = np.clip(h_isi[dfe] / cursor_value, dfe_min, dfe_max)  # (93A-26)
-        h_isi[dfe] -= tap_weights * cursor_value  # (93A-27)
+        tap_weights = np.clip(h_isi[dfe] / self.cursor_value, dfe_min, dfe_max)  # (93A-26)
+        h_isi[dfe] -= tap_weights * self.cursor_value  # (93A-27)
 
         return np.asarray(h_isi, dtype=np.float64)
 

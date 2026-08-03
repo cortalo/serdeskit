@@ -17,7 +17,7 @@ from pychopmarg.config.template import COMParams
 from serdeskit.channel import SParameterChannel
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
-from serdeskit.link import Link
+from serdeskit.link import Link, SystemGrid
 from serdeskit.rx_afe import RxAfeButterworth
 
 G_DC = -6.0
@@ -134,9 +134,10 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
         rx_afe=RxAfeButterworth(cutoff_freq=cfg.f_r * baud_rate),
     )
 
-    actual = link.ffe_channel_ctle_pulse_response(
+    grid = SystemGrid.build(
         baud_rate=baud_rate, freq_step=cfg.fstep * 1e9, samples_per_ui=cfg.M
-    ).samples
+    )
+    actual = link.ffe_channel_ctle_pulse_response(grid).samples
 
     assert actual.shape == expected.shape
     # With `exact_pi` removing PyChOpMarg's truncated-PI difference, the two

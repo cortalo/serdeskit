@@ -94,12 +94,7 @@ class Link:
         eye = _extract_eye(sig, symbol_rate)
         return LinkResult(eye=eye)
 
-    def ffe_channel_ctle_pulse_response(
-        self,
-        baud_rate: float,
-        freq_step: float,
-        samples_per_ui: int,
-    ) -> Signal:
+    def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
         """(93A-19)/(93A-24) pulse response: composes channel's, ctle's,
         ffe's, and rx_afe's transfer functions on a shared SystemGrid and
         inverse-transforms the result into a Signal. Requires
@@ -117,16 +112,14 @@ class Link:
         depend on `serdeskit.pulse_response`.
 
         Args:
-            baud_rate: Symbol rate (Hz).
-            freq_step: Frequency-domain resolution, Δf (Hz) — see
-                SystemGrid.build.
-            samples_per_ui: Time-domain samples per UI.
+            grid: The time/frequency axes to compute on. Taken rather
+                than derived here so a caller needing the same axes for
+                something else — the (93A-35) noise integral, say — uses
+                one grid instead of deriving a second that has to agree.
 
         Returns:
             The link's pulse response, as a Signal.
         """
-        grid = SystemGrid.build(baud_rate, freq_step, samples_per_ui)
-
         h = (
             self.channel.transfer_function(grid.f)
             * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]

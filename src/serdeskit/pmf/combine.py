@@ -20,20 +20,28 @@ import numpy.typing as npt
 
 
 def combine_pmfs(
-    a: npt.NDArray[np.float64],
-    b: npt.NDArray[np.float64],
+    *pmfs: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:
-    """The PMF of the sum of two independent random variables, given their
-    individual PMFs on the same shared voltage grid.
+    """The PMF of the sum of two or more independent random variables,
+    given their individual PMFs on the same shared voltage grid.
+
+    Variadic rather than fixed at two so that combining, say, ISI, the
+    Gaussian term, deterministic jitter, and however many crosstalk
+    aggressors (93A-43/93A-44/93A-45) happen to be configured is one call
+    with that many arguments, not a hand-nested chain of pairwise calls
+    that grows every time a source is added.
 
     Args:
-        a: One source's PMF (e.g. `delta_pmf`'s or `gaussian_pmf`'s
-            output), on a given voltage grid.
-        b: Another, independent source's PMF, on the *same* voltage grid
-            as `a` (same length, same step).
+        *pmfs: Two or more independent sources' PMFs (e.g. `delta_pmf`'s
+            or `gaussian_pmf`'s output), all on the *same* voltage grid
+            (same length, same step). A single PMF is returned unchanged
+            — the sum of one random variable is just that variable.
 
     Returns:
         The combined PMF, on that same shared grid, summing to 1.
     """
-    convolved = np.convolve(a, b, mode="same")
-    return np.asarray(convolved / convolved.sum(), dtype=np.float64)
+    combined = pmfs[0]
+    for pmf in pmfs[1:]:
+        convolved = np.convolve(combined, pmf, mode="same")
+        combined = convolved / convolved.sum()
+    return np.asarray(combined, dtype=np.float64)

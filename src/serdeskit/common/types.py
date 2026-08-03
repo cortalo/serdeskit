@@ -24,3 +24,10 @@ class Signal:
 
     def __len__(self) -> int:
         return len(self.samples)
+
+    def scale(self, factor: float) -> Signal:
+        """A new Signal with `samples` scaled by `factor`; `fs`/`t0`
+        unchanged. Frozen, so this is how a Signal gets rescaled — not by
+        mutating one in place.
+        """
+        return Signal(samples=self.samples * factor, fs=self.fs, t0=self.t0)

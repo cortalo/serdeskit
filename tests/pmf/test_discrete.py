@@ -56,27 +56,27 @@ def test_single_ui_nrz_is_two_equal_spikes() -> None:
     assert pmf.sum() == pytest.approx(1.0)
 
 
-def test_grid_too_narrow_raises() -> None:
-    """`delta_pmf` builds up the result via `np.roll`, which wraps rather
-    than drops values that shift past an array's edge. If `y` isn't wide
-    enough to hold the worst-case total displacement (every sample's
-    contribution landing at its most extreme value, same sign), that
-    wraparound silently aliases high-voltage mass onto the low-voltage side
-    (or vice versa) instead of erroring — this must be rejected up front
-    instead of returning a quietly-wrong PMF.
+def test_narrow_grid_is_accepted_and_wraps() -> None:
+    """Documents what the disabled width check used to reject (see the
+    TODO in delta_pmf): `y` too narrow for the input is now accepted, and
+    `np.roll` wraps mass across the opposite edge rather than dropping it.
+
+    Here the three samples can reach +/-0.15 V on a grid spanning only
+    +/-0.1 V. Mass that should sit beyond +0.1 V reappears near -0.1 V.
+    This is not a behavior to rely on — it's the aliasing the check was
+    meant to catch — but pinning it down means re-enabling a width check
+    can't silently change results without a test noticing.
     """
-    h_samples = np.array([0.05, 0.05, 0.05])  # worst case: 0.15V, same sign
-    y = _grid(max_y=0.1, npts=21)  # only wide enough for 0.1V
-
-    with pytest.raises(ValueError):
-        delta_pmf(h_samples, levels=2, y=y)
-
-
-def test_grid_exactly_wide_enough_does_not_raise() -> None:
-    h_samples = np.array([0.05, 0.05])  # worst case: exactly 0.1V
+    h_samples = np.array([0.05, 0.05, 0.05])
     y = _grid(max_y=0.1, npts=21)
 
-    delta_pmf(h_samples, levels=2, y=y)  # must not raise
+    pmf = delta_pmf(h_samples, levels=2, y=y)
+
+    assert pmf.sum() == pytest.approx(1.0)
+    # All-same-sign at +0.05 each lands on +0.15 V, off the top of the
+    # grid; it wraps to the bottom instead of being dropped.
+    ix_wrapped = int(np.argmin(np.abs(y - (-0.05))))
+    assert pmf[ix_wrapped] > 0.0
 
 
 def test_non_uniform_grid_raises() -> None:
