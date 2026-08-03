@@ -30,8 +30,16 @@ with the pattern. Key properties to preserve:
   `typing.Protocol`, not `abc.ABC` — a concrete stage class should never
   need to import or subclass anything from the package that consumes it
   (mirrors "infra/postgres.Store satisfies it implicitly" from the author's
-  other project, `~/Documents/digitalgarden-backend`). See
-  `src/serdeskit/common/types.py`'s `Stage` protocol.
+  other project, `~/Documents/digitalgarden-backend`). Each stage kind gets
+  its own Protocol (`Channel`, and — as they're added — `Ctle`, `Ffe`),
+  defined in `link/link.py` where `Link` (the consumer) needs them —
+  deliberately **not** a single generic `Stage` protocol shared across all
+  of them. They'd currently be structurally identical
+  (`process(Signal) -> Signal`), but DFE won't fit that shape at all (it's
+  a feedback structure, not a plain filter), so a uniform `Stage` type was
+  never going to cover the whole pipeline anyway — separate names keep
+  each stage's role self-documenting in `Link`'s own type signature
+  instead.
 - **Domain data is plain and presentation-free.** `Link.simulate()` returns
   `LinkResult` — a `@dataclass(frozen=True)` of arrays/floats — never a
   matplotlib figure. Plotting is a separate, outer layer (not yet built)
@@ -67,19 +75,32 @@ is that Python's structural typing (`Protocol`) is opt-in (checked by
   specifically to prevent the class of index-misalignment bug that silently
   corrupted a BER estimate during earlier `serdespy` exploration: a stage
   must never require callers to track array-index-to-absolute-time offsets
-  by hand) and the `Stage` protocol (`process(Signal) -> Signal`).
-- `link/link.py`: `Link` (constructor: `stages: list[Stage]`,
-  `symbol_rate: float`) and the result types `LinkResult`/`EyeData`/
-  `BathtubCurve`. `Link.simulate()` runs stages in order, then currently
-  raises `NotImplementedError` at the eye/bathtub extraction step —
-  **deliberately unimplemented**, not a bug: whether to use PDA
-  (worst-case, deterministic) or statistical (Gaussian-tail-extrapolated)
-  BER methodology is an open decision, to be made after working through
-  the ECEN 720 labs (`~/Documents/test/ecen720-materials/`), not guessed at
-  here. Don't fill this in without that context.
-- No concrete `Stage` implementations exist yet (no channel/CTLE/FFE/DFE/ADC
-  packages). `tests/link/test_link.py` uses an inline no-op `PassThrough`
-  stage as a stand-in.
+  by hand). No shared `Stage` protocol — see the architecture note above.
+- `link/link.py`: the `Channel` protocol (`process(Signal) -> Signal`),
+  `Link` (constructor: `channel: Channel`, single stage so far), and the
+  result types `LinkResult`/`EyeData`. `Link.simulate(bits, fs,
+  symbol_rate)` upsamples `bits` into a waveform, runs it through the
+  channel, and slices out an eye (2-UI sliding window, 1-UI step). No
+  bathtub-curve/BER extraction yet — not started, not merely unimplemented:
+  whether to use PDA (worst-case, deterministic) or statistical
+  (Gaussian-tail-extrapolated) BER methodology was an open decision;
+  `pmf/`'s delta-PMF/convolution machinery (below) is the statistical route
+  taking shape. `Ctle`/`Ffe` protocols are about to be added alongside
+  `Channel`, one per stage kind (see architecture note above) — `Link`
+  itself doesn't yet accept them.
+- `channel/`: `PassThroughChannel` (no-op stand-in) and `SParameterChannel`
+  (Touchstone-loaded, via `scikit-rf`) — both satisfy `Channel` implicitly.
+- `pmf/`: `delta_pmf`/`gaussian_pmf`/`combine_pmfs`/`noise_margin` — COM's
+  noise/interference PMF construction (IEEE 802.3-2022 Annex 93A),
+  golden-tested against `PyChOpMarg`.
+- `pulse_response/`: `PulseResponse` (a `Signal` subtype with cursor/UI
+  identified — `is-a Signal`, purely additive fields), `from_signal`
+  (Muller-Mueller cursor location), `local_slopes`, `signal_amplitude`.
+  Not yet wired to a real multi-stage `Link` output — next up is teaching
+  `Link` to produce a `PulseResponse` by running an impulse through its
+  stages (channel, then CTLE/FFE once they exist), which is what motivates
+  adding `Ctle`/`Ffe` protocols now.
+- No CTLE/FFE/DFE/ADC implementations exist yet.
 
 ## Commands
 

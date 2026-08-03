@@ -13,7 +13,7 @@ from serdeskit.common.types import Signal
 
 
 class SParameterChannel:
-    def __init__(self, network: skrf.Network) -> None:
+    def __init__(self, network: skrf.Network, gamma1: float = 0.0, gamma2: float = 0.0) -> None:
         """A 4-port network is assumed single-ended, in the port order used
         by the ECEN 720 `peters_*`/`Case4_*` Touchstone files and by
         MATLAB's `s2sdd` default (see reference/ecen720/read_sparam.m):
@@ -22,6 +22,13 @@ class SParameterChannel:
         ports are renumbered [0,1,2,3] -> [0,2,1,3] before conversion. This
         matches the permutation PyBERT's `import_freq()` documents for the
         same file family ([4k, 4k+2, 4k+1, 4k+3] for lane k=0).
+
+        `gamma1`/`gamma2` are the reflection coefficients looking out of
+        the near/far ends of the channel (e.g. `(R_d - R_0) / (R_d + R_0)`
+        for a die impedance R_d against system reference impedance R_0) —
+        used by `transfer_function` (93A-18) to account for reflections
+        at imperfectly-terminated ends. Default 0.0 (perfectly matched,
+        no reflection) makes `transfer_function` reduce to plain S21.
         """
         if network.nports == 4:
             network = network.copy()
@@ -31,6 +38,8 @@ class SParameterChannel:
         elif network.nports != 2:
             raise ValueError(f"expected a 2-port or 4-port network, got {network.nports}-port")
         self._network = network
+        self.gamma1 = gamma1
+        self.gamma2 = gamma2
 
     @classmethod
     def from_touchstone(cls, path: str) -> SParameterChannel:
@@ -47,6 +56,36 @@ class SParameterChannel:
         target = skrf.Frequency.from_f(freq, unit="Hz")
         interpolated = self._network.interpolate(target, coords="polar")
         return np.asarray(interpolated.s[:, 1, 0], dtype=np.complex128)
+
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
+        """(93A-18): the terminated two-port voltage transfer function,
+        H21(f) — accounts for reflections at both ends when `gamma1`/
+        `gamma2` are nonzero (plain S21 is only the exact answer under
+        perfect termination, gamma1=gamma2=0).
+
+        Frequencies beyond this channel's measured band are handled the
+        same way PyChOpMarg's `calc_H21` does: extrapolate the network to
+        DC, cubic-interpolate in-band, then hold the last in-band value
+        constant (edge-pad) beyond it — not a policy this project has
+        independently settled on; matched here for golden-test
+        comparability (see the S-parameter-extrapolation discussion in
+        this project's history for why: PyChOpMarg and the official IEEE
+        802.3 MATLAB COM tool don't even agree with each other on this).
+        """
+        in_band = self._network.extrapolate_to_dc().interpolate(
+            freqs[freqs <= self._network.f[-1]], kind="cubic", coords="polar",
+            basis="t", assume_sorted=True,
+        )
+        pad_len = len(freqs) - len(in_band.f)
+        s11 = np.pad(in_band.s[:, 0, 0], (0, pad_len), mode="edge")
+        s12 = np.pad(_raised_cosine(in_band.s[:, 0, 1]), (0, pad_len), mode="edge")
+        s21 = np.pad(_raised_cosine(in_band.s[:, 1, 0]), (0, pad_len), mode="edge")
+        s22 = np.pad(in_band.s[:, 1, 1], (0, pad_len), mode="edge")
+
+        g1, g2 = self.gamma1, self.gamma2
+        d_s = s11 * s22 - s12 * s21
+        h = (s21 * (1 - g1) * (1 + g2)) / (1 - s11 * g1 - s22 * g2 + g1 * g2 * d_s)
+        return np.asarray(h, dtype=np.complex128)
 
     def impulse_response(
         self, dt: float | None = None
@@ -117,6 +156,18 @@ class SParameterChannel:
         out = np.asarray(fftconvolve(sig.samples, h_trimmed, mode="valid"), dtype=np.float64)
         t0 = sig.t0 + (delay_samples + len(h_trimmed) - 1) * dt
         return Signal(samples=out, fs=sig.fs, t0=t0)
+
+
+def _raised_cosine(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
+    """(93A-18): tapers `x` from full weight at its first entry to zero
+    weight at its last, per PyChOpMarg's own `raised_cosine` — applied to
+    S12/S21 (not S11/S22) before edge-padding beyond the measured band, so
+    the padded region holds a near-zero value rather than the untapered
+    edge value.
+    """
+    n = len(x)
+    w = (np.cos(np.pi * np.arange(n) / n) + 1) / 2
+    return np.asarray(w * x, dtype=np.complex128)
 
 
 def _trim_impulse(

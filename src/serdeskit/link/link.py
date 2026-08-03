@@ -13,16 +13,44 @@ import numpy as np
 import numpy.typing as npt
 
 from serdeskit.common.types import Signal
+from serdeskit.link.system_grid import SystemGrid
 
 
 class Channel(Protocol):
     """What Link needs from a channel: turn the signal launched into it into
-    the signal that arrives at the receiver. Satisfied implicitly — a
-    concrete channel class needs no relation to this Protocol beyond having
-    a matching `process` method.
+    the signal that arrives at the receiver, and/or expose its frequency
+    response for COM-style pulse-response generation (SystemGrid.
+    pulse_response). Satisfied implicitly — a concrete channel class needs
+    no relation to this Protocol beyond having matching methods.
     """
 
     def process(self, sig: Signal) -> Signal: ...
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+
+
+class Ctle(Protocol):
+    """What Link needs from a CTLE. Same shape as Channel, but kept as its
+    own Protocol rather than a shared generic one — see CLAUDE.md's
+    architecture note on why.
+    """
+
+    def process(self, sig: Signal) -> Signal: ...
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+
+
+class Ffe(Protocol):
+    """What Link needs from an FFE."""
+
+    def process(self, sig: Signal) -> Signal: ...
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+
+
+class RxAfe(Protocol):
+    """What Link needs from an Rx analog front-end — same situation as
+    TxFilter, frequency-domain only.
+    """
+
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,11 +69,19 @@ class LinkResult:
 
 @dataclass
 class Link:
-    """channel is the (currently only) stage the launched signal passes
-    through.
+    """channel is the stage the bit-domain `simulate()` pipeline runs the
+    launched signal through. `ctle`/`ffe`/`rx_afe` are only used by
+    `ffe_channel_ctle_pulse_response()`'s frequency-domain composition —
+    optional since `simulate()` doesn't need them; left unset and then
+    used there raises a plain AttributeError, which is fine (a caller
+    building a pulse response without equalization is a caller error, not
+    a case worth a defensive check).
     """
 
     channel: Channel
+    ctle: Ctle | None = None
+    ffe: Ffe | None = None
+    rx_afe: RxAfe | None = None
 
     def simulate(self, bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> LinkResult:
         """bits is one value per symbol; symbol_rate is what turns it into a
@@ -57,6 +93,48 @@ class Link:
 
         eye = _extract_eye(sig, symbol_rate)
         return LinkResult(eye=eye)
+
+    def ffe_channel_ctle_pulse_response(
+        self,
+        baud_rate: float,
+        freq_step: float,
+        samples_per_ui: int,
+    ) -> Signal:
+        """(93A-19)/(93A-24) pulse response: composes channel's, ctle's,
+        ffe's, and rx_afe's transfer functions on a shared SystemGrid and
+        inverse-transforms the result into a Signal. Requires
+        `self.ctle`/`self.ffe`/`self.rx_afe` to be set (see the class
+        docstring for what happens if not).
+
+        No Tx risetime filter here despite composing "the whole path":
+        per (93A-19), it has no role in the pulse response — it only
+        shapes the transmitter noise PSD used in the noise calculation,
+        a separate concern from this method.
+
+        Not yet cursor-located — pass the result to
+        `PulseResponse.from_signal(...)` for that; kept as a separate
+        step here rather than folded in, so this package doesn't need to
+        depend on `serdeskit.pulse_response`.
+
+        Args:
+            baud_rate: Symbol rate (Hz).
+            freq_step: Frequency-domain resolution, Δf (Hz) — see
+                SystemGrid.build.
+            samples_per_ui: Time-domain samples per UI.
+
+        Returns:
+            The link's pulse response, as a Signal.
+        """
+        grid = SystemGrid.build(baud_rate, freq_step, samples_per_ui)
+
+        h = (
+            self.channel.transfer_function(grid.f)
+            * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.ffe.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+        )
+
+        return grid.pulse_response(h)
 
 
 def _upsample_bits(bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> npt.NDArray[np.float64]:
