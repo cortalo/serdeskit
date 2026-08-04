@@ -17,8 +17,10 @@ import pychopmarg.utility.filter
 import pytest
 import skrf
 from pychopmarg.com import COM
-from pychopmarg.common import OptMode
+from pychopmarg.common import COMChnl, OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
+from pychopmarg.utility.filter import calc_H21
+from pychopmarg.utility.sparams import sdd_21
 
 from serdeskit.channel import SParameterChannel
 from serdeskit.com import Com, ComParams
@@ -46,12 +48,16 @@ class Reference:
     sigma_gaussian: float
     tx_taps: npt.NDArray[np.float64]
     channel_path: Path
+    next_channel_paths: list[Path]
+    fext_channel_paths: list[Path]
     baud_rate: float
     freq_step: float
     samples_per_ui: int
     levels: int
     rlm: float
     victim_amplitude: float
+    a_ne: float
+    a_fe: float
     snr_tx: float
     sigma_rj: float
     eta_0: float
@@ -61,6 +67,7 @@ class Reference:
     dfe_max: npt.NDArray[np.float64]
     afe_cutoff: float
     ctle_freqs: tuple[float, float, float, float]
+    noise_pmf: npt.NDArray[np.float64]
 
 
 @pytest.fixture(scope="module")
@@ -86,18 +93,47 @@ def reference() -> Iterator[Reference]:
         yield _build_reference()
 
 
-def _build_reference() -> Reference:
-    freq = np.linspace(1e8, 40e9, 400)
-    loss = np.exp(-np.sqrt(freq / 1e9) * 0.08) * np.exp(-1j * 2 * np.pi * freq * 3e-10)
-    refl = 0.03 * np.exp(-1j * 2 * np.pi * freq * 1e-10)
+def _synthetic_s4p(path: Path, freq: npt.NDArray[np.float64], loss_exponent: float, delay: float, refl_mag: float) -> None:
+    """A lossy, mildly-reflective synthetic 4-port thru, written to a
+    Touchstone file — same shape `test_pulse_response_vs_pychopmarg.py`
+    uses for the victim channel, parameterized here so THRU/NEXT/FEXT can
+    each get their own distinguishable loss and delay.
+    """
+    loss = np.exp(-np.sqrt(freq / 1e9) * loss_exponent) * np.exp(-1j * 2 * np.pi * freq * delay)
+    refl = refl_mag * np.exp(-1j * 2 * np.pi * freq * 1e-10)
     s = np.zeros((len(freq), 4, 4), dtype=complex)
     for a, b in [(0, 1), (2, 3)]:
         s[:, a, a] = refl
         s[:, b, b] = refl
         s[:, b, a] = loss
         s[:, a, b] = loss
-    path = Path(tempfile.mkdtemp()) / "synthetic_thru.s4p"
     skrf.Network(f=freq, s=s, z0=50, f_unit="Hz").write_touchstone(str(path))
+
+
+def _no_pkg_chnl(com: COM, path: Path, ntype: str) -> COMChnl:
+    """PyChOpMarg's own `chnls_noPkg` (debug mode) only ever covers
+    `ntwks[0]` (the THRU channel) — `add_pkg` is what handles the rest,
+    but it also adds the package model this project doesn't implement.
+    This reproduces `add_pkg`'s own `calc_H21` call for an arbitrary
+    channel/type, so THRU/NEXT/FEXT can all get the same package-free
+    treatment `chnls_noPkg[0]` already gets.
+    """
+    ntwk = sdd_21(skrf.Network(str(path)))
+    h21 = calc_H21(com.freqs, ntwk, com.gamma1_Tx, com.gamma2_Rx)
+    return (ntwk, ntype), h21
+
+
+def _build_reference() -> Reference:
+    freq = np.linspace(1e8, 40e9, 400)
+    tmp = Path(tempfile.mkdtemp())
+    thru_path = tmp / "synthetic_thru.s4p"
+    _synthetic_s4p(thru_path, freq, loss_exponent=0.08, delay=3e-10, refl_mag=0.03)
+    next1_path = tmp / "synthetic_next1.s4p"
+    _synthetic_s4p(next1_path, freq, loss_exponent=0.03, delay=1e-10, refl_mag=0.02)
+    next2_path = tmp / "synthetic_next2.s4p"
+    _synthetic_s4p(next2_path, freq, loss_exponent=0.04, delay=1.5e-10, refl_mag=0.02)
+    fext_path = tmp / "synthetic_fext.s4p"
+    _synthetic_s4p(fext_path, freq, loss_exponent=0.09, delay=3.2e-10, refl_mag=0.025)
 
     cfg = copy.deepcopy(IEEE_8023dj)
     cfg.fstep = 0.1
@@ -107,7 +143,11 @@ def _build_reference() -> Reference:
     cfg.C_p = [4e-05, 4e-05]
     cfg.C_b = [3e-05, 3e-05]
 
-    com = COM(cfg, {"THRU": [path], "FEXT": [], "NEXT": []}, debug=True)
+    com = COM(
+        cfg,
+        {"THRU": [thru_path], "FEXT": [fext_path], "NEXT": [next1_path, next2_path]},
+        debug=True,
+    )
     com.gDC, com.gDC2 = G_DC, G_DC2
     com.tx_ix = TX_COMB_IX
     com.nRxTaps = 0
@@ -115,9 +155,15 @@ def _build_reference() -> Reference:
     com.dfe_taps = np.array([])
     com.opt_mode = OptMode.PRZF
     # calc_noise() would otherwise use `chnls`, which includes the package
-    # model this project doesn't implement; `chnls_noPkg` is the same
-    # terminated channel without it, matching what our Link composes.
-    com.chnls = com.chnls_noPkg
+    # model this project doesn't implement; built here package-free for
+    # every channel (THRU and every aggressor), matching what our Link
+    # composes — see _no_pkg_chnl.
+    com.chnls = [
+        _no_pkg_chnl(com, thru_path, "THRU"),
+        _no_pkg_chnl(com, fext_path, "FEXT"),
+        _no_pkg_chnl(com, next1_path, "NEXT"),
+        _no_pkg_chnl(com, next2_path, "NEXT"),
+    ]
     signal_amplitude, noise_amplitude, _ = com.calc_noise()
 
     r = com.com_rslts
@@ -130,13 +176,17 @@ def _build_reference() -> Reference:
         sigma_noise=float(r["sigma_N"]),
         sigma_gaussian=float(r["sigma_G"]),
         tx_taps=np.array(com._tx_combs[TX_COMB_IX]),
-        channel_path=path,
+        channel_path=thru_path,
+        next_channel_paths=[next1_path, next2_path],
+        fext_channel_paths=[fext_path],
         baud_rate=float(cfg.fb) * 1e9,
         freq_step=float(cfg.fstep) * 1e9,
         samples_per_ui=int(cfg.M),
         levels=int(cfg.L),
         rlm=float(cfg.RLM),
         victim_amplitude=float(cfg.A_v),
+        a_ne=float(cfg.A_ne),
+        a_fe=float(cfg.A_fe),
         snr_tx=float(cfg.SNR_TX),
         sigma_rj=float(cfg.sigma_Rj),
         eta_0=float(cfg.eta_0),
@@ -151,6 +201,12 @@ def _build_reference() -> Reference:
             float(cfg.f_p2) * 1e9,
             float(cfg.f_LF) * 1e9,
         ),
+        # r["py"] is the final combined PMF (93A-43)+(93A-44)+(93A-45)
+        # *before* PyChOpMarg normalizes it — only the CDF (`Py`) gets
+        # that treatment on their side. Our combine_pmfs renormalizes at
+        # every step including the last, so this needs the same
+        # normalization applied to be comparable.
+        noise_pmf=np.asarray(r["py"], dtype=np.float64) / np.asarray(r["py"], dtype=np.float64).sum(),
     )
 
 
@@ -180,6 +236,8 @@ def _build_com(ref: Reference) -> Com:
         levels=ref.levels,
         rlm=ref.rlm,
         victim_amplitude=ref.victim_amplitude,
+        a_ne=ref.a_ne,
+        a_fe=ref.a_fe,
         snr_tx=ref.snr_tx,
         sigma_rj=ref.sigma_rj,
         eta_0=ref.eta_0,
@@ -188,7 +246,12 @@ def _build_com(ref: Reference) -> Com:
         dfe_min=ref.dfe_min,
         dfe_max=ref.dfe_max,
     )
-    return Com(link=link, params=params)
+    return Com(
+        link=link,
+        params=params,
+        next_channels=[SParameterChannel.from_touchstone(str(p)) for p in ref.next_channel_paths],
+        fext_channels=[SParameterChannel.from_touchstone(str(p)) for p in ref.fext_channel_paths],
+    )
 
 
 @pytest.mark.usefixtures("exact_pi")
@@ -231,6 +294,27 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     assert result.sigma_jitter == pytest.approx(reference.sigma_jitter, rel=1e-9)
     assert result.sigma_noise == pytest.approx(reference.sigma_noise, rel=1e-9)
     assert result.sigma_gaussian == pytest.approx(reference.sigma_gaussian, rel=1e-9)
+
+
+@pytest.mark.usefixtures("exact_pi")
+def test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors(reference: Reference) -> None:
+    """noise_amplitude/com_db alone don't prove the crosstalk aggressors
+    were folded in correctly: per test_com_value_matches_pychopmarg's own
+    docstring, this synthetic channel's interference distribution
+    already saturates the +/-1.1*As grid, so Ani can land on the same
+    grid edge whether or not crosstalk contributed anything to the
+    distribution that produced it. Comparing the full combined PMF
+    (which includes two NEXT and one FEXT aggressor, per the `reference`
+    fixture) sidesteps that — it can't agree by coincidence.
+    """
+    result = _build_com(reference).compute()
+
+    # Looser than this file's other rel=1e-9 comparisons: this PMF is
+    # built from several chained mode="same" convolutions, each
+    # accumulating its own floating-point noise (~1e-8 absolute, observed
+    # — still far tighter than the 2.6% a genuinely wrong grouping
+    # produced during development).
+    np.testing.assert_allclose(result.noise_pmf, reference.noise_pmf, rtol=1e-4, atol=1e-7)
 
 
 @pytest.mark.usefixtures("exact_pi")

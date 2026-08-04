@@ -12,6 +12,8 @@ def _params(levels: int) -> ComParams:
         levels=levels,
         rlm=1.0,
         victim_amplitude=0.4,
+        a_ne=0.6,
+        a_fe=0.4,
         snr_tx=27.0,
         sigma_rj=0.01,
         eta_0=5.2e-8,

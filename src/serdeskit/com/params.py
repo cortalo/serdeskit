@@ -28,6 +28,12 @@ class ComParams:
     # after: the Muller-Mueller search's `eps` is an absolute voltage, so
     # an unscaled response can settle on a different cursor sample.
     victim_amplitude: float
+    # A_ne/A_fe (V): NEXT/FEXT aggressor launch amplitudes — same role as
+    # victim_amplitude, one per crosstalk kind. Applied to an aggressor's
+    # pulse response the same way (before its worst-case-phase samples are
+    # taken), per PyChOpMarg's gen_pulse_resps.
+    a_ne: float
+    a_fe: float
     snr_tx: float  # SNR_TX (dB) — transmitter noise, (93A-30)
     sigma_rj: float  # random jitter (UI RMS) — (93A-31)
     eta_0: float  # one-sided noise spectral density (V^2/GHz) — (93A-35)

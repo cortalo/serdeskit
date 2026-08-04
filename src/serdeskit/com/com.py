@@ -16,13 +16,16 @@ way:
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
 
 from serdeskit.com.params import ComParams
-from serdeskit.link import Link, SystemGrid
+from serdeskit.crosstalk import worst_case_phase_samples
+from serdeskit.ffe import TapWeightFfe
+from serdeskit.link import Channel, Link, SystemGrid
 from serdeskit.pmf import (
     combine_pmfs,
     delta_pmf,
@@ -57,8 +60,21 @@ class ComResult:
 
 @dataclass
 class Com:
+    """next_channels/fext_channels: one Channel per crosstalk aggressor.
+    Com builds each aggressor's Link itself, from `self.link`'s own
+    ctle/rx_afe — those are receiver-side and shared by every signal
+    arriving at the victim's Rx, aggressor or not — plus a Tx FFE that
+    depends on the aggressor kind: NEXT gets a flat, unequalized FFE (its
+    neighbor's own Tx FFE isn't known), FEXT reuses the victim's own tap
+    weights (same link, assumed same equalization). Same rule
+    PyChOpMarg's gen_pulse_resps applies. A caller only supplies the
+    channel; it doesn't reconstruct this rule itself.
+    """
+
     link: Link
     params: ComParams
+    next_channels: Sequence[Channel] = ()
+    fext_channels: Sequence[Channel] = ()
 
     def compute(self) -> ComResult:
         """Run the calculation end to end: pulse response -> cursor ->
@@ -88,9 +104,16 @@ class Com:
         # Deterministic jitter converts to amplitude through the pulse
         # response's local slope; random jitter uses the same slopes but
         # stays Gaussian, so it joins varG rather than getting its own PMF.
+        #
+        # `1.1 * signal_amplitude` here (and below, for ISI and each
+        # aggressor) matches PyChOpMarg's calc_noise, which filters all
+        # three against `ymax` — voltage_grid's own half-width — rather
+        # than signal_amplitude itself. Unlike local_slopes just above,
+        # whose validity threshold PyChOpMarg's calc_hJ applies against
+        # signal_amplitude directly.
         slopes = pulse_response.local_slopes(signal_amplitude)
         p_jitter = delta_pmf(
-            filter_samples(p.a_dd * slopes, signal_amplitude), p.levels, y
+            filter_samples(p.a_dd * slopes, 1.1 * signal_amplitude), p.levels, y
         )
 
         rx_response = self.link.ctle.transfer_function(grid.f) * self.link.rx_afe.transfer_function(  # type: ignore[union-attr]
@@ -103,12 +126,44 @@ class Com:
         p_gaussian = gaussian_pmf(var_gaussian, y)
 
         residual = pulse_response.residual_isi(p.dfe_min, p.dfe_max)  # (93A-26)/(93A-27)
-        p_isi = delta_pmf(filter_samples(residual, signal_amplitude), p.levels, y)
+        p_isi = delta_pmf(filter_samples(residual, 1.1 * signal_amplitude), p.levels, y)
 
-        # No crosstalk aggressors yet, so this omits (93A-44)'s per-aggressor
-        # terms — a call with more arguments once they exist, not a
-        # different shape of call. (93A-43)+(93A-45) combined into one step.
-        p_total = combine_pmfs(p_gaussian, p_jitter, p_isi)
+        # Each aggressor: scale to its launch amplitude (A_ne/A_fe — same
+        # rule as the victim's A_v), pick its worst-case sub-UI phase
+        # (93A-33), then the same delta_pmf treatment ISI/jitter get.
+        aggressors = [(link, p.a_ne) for link in self._next_links()] + [
+            (link, p.a_fe) for link in self._fext_links()
+        ]
+        p_aggressors = [
+            delta_pmf(
+                filter_samples(
+                    worst_case_phase_samples(
+                        link.ffe_channel_ctle_pulse_response(grid).scale(amplitude).samples,
+                        p.samples_per_ui,
+                    ),
+                    1.1 * signal_amplitude,
+                ),
+                p.levels,
+                y,
+            )
+            for link, amplitude in aggressors
+        ]
+
+        # Aggressors combined among themselves before joining the rest,
+        # not folded in one at a time: np.convolve(..., mode="same")
+        # truncates whenever a combined distribution outgrows the shared
+        # voltage grid (it does here — p_isi alone is wide enough that
+        # folding it and each aggressor together one at a time loses mass
+        # differently than combining the aggressors as their own group
+        # first, since truncation depends on what's already been folded
+        # into the array at each step — matches PyChOpMarg's own grouping
+        # exactly. combine_pmfs's renormalization timing doesn't matter on
+        # its own (a scalar divide commutes with a subsequent same-mode
+        # convolution+crop) — only this grouping does.
+        p_total = combine_pmfs(p_gaussian, p_jitter, p_isi)  # (93A-42)/(93A-43)
+        if p_aggressors:
+            p_crosstalk = combine_pmfs(*p_aggressors)  # (93A-44): pXT
+            p_total = combine_pmfs(p_total, p_crosstalk)  # (93A-45)
 
         noise_amplitude = noise_margin(p_total, y, p.der_0)
 
@@ -123,6 +178,30 @@ class Com:
             voltage_grid=y,
             noise_pmf=p_total,
         )
+
+    def _next_links(self) -> list[Link]:
+        flat_ffe = _flat_ffe(1.0 / self.params.baud_rate)
+        return [
+            Link(channel=channel, ctle=self.link.ctle, ffe=flat_ffe, rx_afe=self.link.rx_afe)
+            for channel in self.next_channels
+        ]
+
+    def _fext_links(self) -> list[Link]:
+        return [
+            Link(channel=channel, ctle=self.link.ctle, ffe=self.link.ffe, rx_afe=self.link.rx_afe)
+            for channel in self.fext_channels
+        ]
+
+
+def _flat_ffe(tap_delay: float) -> TapWeightFfe:
+    """A flat, unequalized Tx FFE — the reference NEXT aggressors are
+    assumed to use, per PyChOpMarg's gen_pulse_resps (`tx_ix=0`, the
+    all-zero tap combination). Empty tap_weights make TapWeightFfe.
+    cursor_weight 1.0 with no other taps, so its transfer function is
+    unity at every frequency regardless of tap_delay — passed through
+    only for constructor completeness.
+    """
+    return TapWeightFfe(tap_weights=np.array([]), n_post=0, tap_delay=tap_delay)
 
 
 def _gaussian_variances(
