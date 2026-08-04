@@ -12,16 +12,45 @@ from scipy.signal import fftconvolve
 from serdeskit.common.types import Signal
 
 
+def differential_network(network: skrf.Network) -> skrf.Network:
+    """A 4-port network is assumed single-ended, in the port order used
+    by the ECEN 720 `peters_*`/`Case4_*` Touchstone files and by MATLAB's
+    `s2sdd` default (see reference/ecen720/read_sparam.m): (TX+, RX+,
+    TX-, RX-). scikit-rf's `se2gmm` instead expects each differential
+    pair's two ends adjacent — (TX+, TX-, RX+, RX-) — so ports are
+    renumbered [0,1,2,3] -> [0,2,1,3] before conversion. This matches the
+    permutation PyBERT's `import_freq()` documents for the same file
+    family ([4k, 4k+2, 4k+1, 4k+3] for lane k=0).
+
+    Exposed as its own function — not just inlined in
+    `SParameterChannel.__init__` — for callers that need the raw
+    differential network before it's wrapped in a Channel, e.g.
+    `evaluate.evaluate_channel` cascading it with a package model first.
+
+    Args:
+        network: A 2-port (returned unchanged) or 4-port network.
+
+    Returns:
+        The differential two-port (SDD: Tx-diff -> Rx-diff).
+
+    Raises:
+        ValueError: `network` is neither 2-port nor 4-port.
+    """
+    if network.nports == 4:
+        network = network.copy()
+        network.renumber([0, 1, 2, 3], [0, 2, 1, 3])
+        network.se2gmm(p=2)  # mutates in place: ports become d0, d1, c0, c1
+        return network.subnetwork([0, 1])  # SDD: TX-diff -> RX-diff
+    if network.nports != 2:
+        raise ValueError(f"expected a 2-port or 4-port network, got {network.nports}-port")
+    return network
+
+
 class SParameterChannel:
     def __init__(self, network: skrf.Network, gamma1: float = 0.0, gamma2: float = 0.0) -> None:
-        """A 4-port network is assumed single-ended, in the port order used
-        by the ECEN 720 `peters_*`/`Case4_*` Touchstone files and by
-        MATLAB's `s2sdd` default (see reference/ecen720/read_sparam.m):
-        (TX+, RX+, TX-, RX-). scikit-rf's `se2gmm` instead expects each
-        differential pair's two ends adjacent — (TX+, TX-, RX+, RX-) — so
-        ports are renumbered [0,1,2,3] -> [0,2,1,3] before conversion. This
-        matches the permutation PyBERT's `import_freq()` documents for the
-        same file family ([4k, 4k+2, 4k+1, 4k+3] for lane k=0).
+        """A 4-port `network` is converted to its differential two-port
+        via `differential_network` (see there for the port-order
+        assumption); a 2-port is used as-is.
 
         `gamma1`/`gamma2` are the reflection coefficients looking out of
         the near/far ends of the channel (e.g. `(R_d - R_0) / (R_d + R_0)`
@@ -30,14 +59,7 @@ class SParameterChannel:
         at imperfectly-terminated ends. Default 0.0 (perfectly matched,
         no reflection) makes `transfer_function` reduce to plain S21.
         """
-        if network.nports == 4:
-            network = network.copy()
-            network.renumber([0, 1, 2, 3], [0, 2, 1, 3])
-            network.se2gmm(p=2)  # mutates in place: ports become d0, d1, c0, c1
-            network = network.subnetwork([0, 1])  # SDD: TX-diff -> RX-diff
-        elif network.nports != 2:
-            raise ValueError(f"expected a 2-port or 4-port network, got {network.nports}-port")
-        self._network = network
+        self._network = differential_network(network)
         self.gamma1 = gamma1
         self.gamma2 = gamma2
 
