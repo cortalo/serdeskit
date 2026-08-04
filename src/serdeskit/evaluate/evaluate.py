@@ -43,6 +43,7 @@ def evaluate_channel(
     thru_path: Path,
     next_paths: Sequence[Path] = (),
     fext_paths: Sequence[Path] = (),
+    port_order: Sequence[int] = (0, 2, 1, 3),
 ) -> ComEvaluation:
     """Loads `thru_path` (and any aggressor paths), cascades each with
     `standard`'s Tx/Rx package models (PyChOpMarg's own add_pkg — every
@@ -61,6 +62,12 @@ def evaluate_channel(
         thru_path: The victim's raw THRU channel, as a Touchstone file.
         next_paths: Zero or more NEXT aggressor channel files.
         fext_paths: Zero or more FEXT aggressor channel files.
+        port_order: Forwarded to `differential_network` for every
+            channel loaded (victim and aggressors alike — same file
+            family is assumed throughout). Default matches the ECEN720/
+            PyBERT interleaved convention `differential_network` itself
+            defaults to; pass `(0, 1, 2, 3)` for already adjacent-paired
+            files (see `differential_network`'s own docstring).
 
     Returns:
         The winning equalization settings, the full COM result, and
@@ -113,7 +120,7 @@ def evaluate_channel(
     freqs = SystemGrid.build(standard.baud_rate, standard.freq_step, standard.samples_per_ui).f
 
     def load_channel(path: Path) -> Channel:
-        raw = differential_network(skrf.Network(str(path)))
+        raw = differential_network(skrf.Network(str(path)), port_order=port_order)
         cascaded = cascade_channel(raw, tx_package, rx_package, freqs)
         return SParameterChannel(cascaded, gamma1=standard.gamma1, gamma2=standard.gamma2)
 

@@ -4,6 +4,8 @@ through it (satisfying serdeskit.link.Channel's `process`).
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import numpy.typing as npt
 import skrf
@@ -12,15 +14,25 @@ from scipy.signal import fftconvolve
 from serdeskit.common.types import Signal
 
 
-def differential_network(network: skrf.Network) -> skrf.Network:
+def differential_network(
+    network: skrf.Network, port_order: Sequence[int] = (0, 2, 1, 3)
+) -> skrf.Network:
     """A 4-port network is assumed single-ended, in the port order used
     by the ECEN 720 `peters_*`/`Case4_*` Touchstone files and by MATLAB's
     `s2sdd` default (see reference/ecen720/read_sparam.m): (TX+, RX+,
     TX-, RX-). scikit-rf's `se2gmm` instead expects each differential
     pair's two ends adjacent — (TX+, TX-, RX+, RX-) — so ports are
-    renumbered [0,1,2,3] -> [0,2,1,3] before conversion. This matches the
-    permutation PyBERT's `import_freq()` documents for the same file
-    family ([4k, 4k+2, 4k+1, 4k+3] for lane k=0).
+    renumbered [0,1,2,3] -> [0,2,1,3] (`port_order`'s default) before
+    conversion. This matches the permutation PyBERT's `import_freq()`
+    documents for the same file family ([4k, 4k+2, 4k+1, 4k+3] for lane
+    k=0).
+
+    Not every Touchstone file family uses that convention, though — e.g.
+    the IEEE 802.3ck tools archive's `Std_BP_12inch_Meg7_*` backplane
+    data is already adjacent-paired (TX+, TX-, RX+, RX-), per its own
+    `Index_S4P-2019-3628.txt`. Pass `port_order=(0, 1, 2, 3)` (identity)
+    for those — `se2gmm` can pair ports (0,1)/(2,3) directly, no
+    renumbering first.
 
     Exposed as its own function — not just inlined in
     `SParameterChannel.__init__` — for callers that need the raw
@@ -29,6 +41,10 @@ def differential_network(network: skrf.Network) -> skrf.Network:
 
     Args:
         network: A 2-port (returned unchanged) or 4-port network.
+        port_order: The permutation applied before `se2gmm`, mapping
+            `[0, 1, 2, 3]` to this. Default assumes the ECEN720/PyBERT
+            interleaved convention; pass `(0, 1, 2, 3)` for files whose
+            ports are already adjacent-paired.
 
     Returns:
         The differential two-port (SDD: Tx-diff -> Rx-diff).
@@ -38,7 +54,7 @@ def differential_network(network: skrf.Network) -> skrf.Network:
     """
     if network.nports == 4:
         network = network.copy()
-        network.renumber([0, 1, 2, 3], [0, 2, 1, 3])
+        network.renumber([0, 1, 2, 3], list(port_order))
         network.se2gmm(p=2)  # mutates in place: ports become d0, d1, c0, c1
         return network.subnetwork([0, 1])  # SDD: TX-diff -> RX-diff
     if network.nports != 2:
