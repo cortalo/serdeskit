@@ -1,3 +1,4 @@
+from serdeskit.package.cascade import cascade_channel
 from serdeskit.package.die import die_model
 from serdeskit.package.die_ladder import die_ladder_segment
 from serdeskit.package.differential import differential_pair
@@ -7,6 +8,7 @@ from serdeskit.package.transmission_line import package_transmission_line
 
 __all__ = [
     "Package",
+    "cascade_channel",
     "die_ladder_segment",
     "die_model",
     "differential_pair",
