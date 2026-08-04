@@ -78,6 +78,7 @@ class SParameterChannel:
         self._network = differential_network(network)
         self.gamma1 = gamma1
         self.gamma2 = gamma2
+        self._cache: tuple[npt.NDArray[np.float64], float, float, npt.NDArray[np.complex128]] | None = None
 
     @classmethod
     def from_touchstone(cls, path: str) -> SParameterChannel:
@@ -109,7 +110,26 @@ class SParameterChannel:
         comparability (see the S-parameter-extrapolation discussion in
         this project's history for why: PyChOpMarg and the official IEEE
         802.3 MATLAB COM tool don't even agree with each other on this).
+
+        Cached against the exact `freqs` array object last used: an
+        equalization search calls this same channel with the same
+        `SystemGrid.f` object many times over (CTLE gain/Tx FFE taps are
+        what vary between candidates, not the channel), and recomputing
+        from scratch each time was pure waste — profiling
+        examples/compute_com_kr_backplane.py's own search found this
+        `interpolate()` call alone costing ~0.44s each, the dominant
+        cost of the whole search, exactly the step MATLAB's own tool
+        computes once per channel before its search loop rather than
+        once per candidate. Caching on object identity (`is`), not
+        equality, avoids hashing the frequency array on every call;
+        holding the reference in `_cache` keeps it alive so identity
+        can't be confused with an unrelated, since-freed array reusing
+        the same id().
         """
+        cache = self._cache
+        if cache is not None and cache[0] is freqs and cache[1] == self.gamma1 and cache[2] == self.gamma2:
+            return cache[3]
+
         in_band = self._network.extrapolate_to_dc().interpolate(
             freqs[freqs <= self._network.f[-1]], kind="cubic", coords="polar",
             basis="t", assume_sorted=True,
@@ -123,7 +143,9 @@ class SParameterChannel:
         g1, g2 = self.gamma1, self.gamma2
         d_s = s11 * s22 - s12 * s21
         h = (s21 * (1 - g1) * (1 + g2)) / (1 - s11 * g1 - s22 * g2 + g1 * g2 * d_s)
-        return np.asarray(h, dtype=np.complex128)
+        h = np.asarray(h, dtype=np.complex128)
+        self._cache = (freqs, g1, g2, h)
+        return h
 
     def impulse_response(
         self, dt: float | None = None
