@@ -1,22 +1,11 @@
 import numpy as np
-import pychopmarg.utility.sparams
 import pytest
 from pychopmarg.utility.sparams import sDieLadderSegment
 
 from serdeskit.package import die_ladder_segment
 
 
-@pytest.fixture
-def exact_pi(monkeypatch: pytest.MonkeyPatch) -> None:
-    """See tests/package/test_passive.py's own exact_pi — same reasoning,
-    same module needing the patch (sDieLadderSegment calls straight
-    through to sCshunt/sLseries, both defined in pychopmarg.utility.sparams).
-    """
-    monkeypatch.setattr(pychopmarg.utility.sparams, "PI", np.pi)
-    monkeypatch.setattr(pychopmarg.utility.sparams, "TWOPI", 2 * np.pi)
-
-
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi_sparams")
 def test_matches_pychopmarg_golden_reference() -> None:
     """One rung of the on-die parasitic ladder: a shunt capacitor cascaded
     with a series inductor, per sDieLadderSegment(freqs, (R0, Cd, Ls)).

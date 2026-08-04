@@ -1,5 +1,6 @@
 import numpy as np
 import pychopmarg.utility.filter
+import pychopmarg.utility.sparams
 import pytest
 
 
@@ -24,3 +25,17 @@ def exact_pi(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(pychopmarg.utility.filter, "PI", np.pi)
     monkeypatch.setattr(pychopmarg.utility.filter, "TWOPI", 2 * np.pi)
+
+
+@pytest.fixture
+def exact_pi_sparams(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same reasoning as `exact_pi`, but for pychopmarg.utility.sparams —
+    a separate PI/TWOPI binding from pychopmarg.common, imported at
+    module load time independently of pychopmarg.utility.filter's own
+    copy. Every S-parameter formula in tests/package/ (sCshunt, sLseries,
+    sPkgTline, ...) lives in this module, hence its own fixture rather
+    than folding into `exact_pi` — a single test could plausibly need
+    both if it ever spans formulas from both modules.
+    """
+    monkeypatch.setattr(pychopmarg.utility.sparams, "PI", np.pi)
+    monkeypatch.setattr(pychopmarg.utility.sparams, "TWOPI", 2 * np.pi)

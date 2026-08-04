@@ -1,26 +1,11 @@
 import numpy as np
-import pychopmarg.utility.sparams
 import pytest
 from pychopmarg.utility.sparams import sCshunt, sLseries
 
 from serdeskit.package import series_inductor, shunt_capacitor
 
 
-@pytest.fixture
-def exact_pi(monkeypatch: pytest.MonkeyPatch) -> None:
-    """pychopmarg.utility.sparams binds its own PI/TWOPI from
-    pychopmarg.common at import time — yet another separate binding from
-    the ones tests/conftest.py's exact_pi and other package-specific
-    fixtures elsewhere in this session patch (pychopmarg.utility.filter's,
-    pychopmarg.com's). Same reasoning as those: without this, PyChOpMarg's
-    truncated PI shows up as a ~1e-6 relative discrepancy against this
-    project's np.pi-based formula, masking a real logic error.
-    """
-    monkeypatch.setattr(pychopmarg.utility.sparams, "PI", np.pi)
-    monkeypatch.setattr(pychopmarg.utility.sparams, "TWOPI", 2 * np.pi)
-
-
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi_sparams")
 def test_shunt_capacitor_matches_pychopmarg_golden_reference() -> None:
     """(93A-8)."""
     freqs = np.linspace(0, 50e9, 501)
@@ -56,7 +41,7 @@ def test_shunt_capacitor_hand_verified_at_dc() -> None:
     np.testing.assert_allclose(result.s[0, 1, 0], 1.0, atol=1e-15)  # S21
 
 
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi_sparams")
 def test_series_inductor_matches_pychopmarg_golden_reference() -> None:
     freqs = np.linspace(0, 50e9, 501)
     inductance = 1e-10  # 100 pH
