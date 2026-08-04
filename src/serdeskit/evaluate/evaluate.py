@@ -9,7 +9,7 @@ happen here.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +44,7 @@ def evaluate_channel(
     next_paths: Sequence[Path] = (),
     fext_paths: Sequence[Path] = (),
     port_order: Sequence[int] = (0, 2, 1, 3),
+    on_search_progress: Callable[[int, int], None] | None = None,
 ) -> ComEvaluation:
     """Loads `thru_path` (and any aggressor paths), cascades each with
     `standard`'s Tx/Rx package models (PyChOpMarg's own add_pkg — every
@@ -68,6 +69,8 @@ def evaluate_channel(
             PyBERT interleaved convention `differential_network` itself
             defaults to; pass `(0, 1, 2, 3)` for already adjacent-paired
             files (see `differential_network`'s own docstring).
+        on_search_progress: Forwarded to `EqualizationSearch.search` —
+            see there.
 
     Returns:
         The winning equalization settings, the full COM result, and
@@ -145,7 +148,7 @@ def evaluate_channel(
         next_channels=next_channels,
         fext_channels=fext_channels,
     )
-    search_result = search.search()
+    search_result = search.search(on_progress=on_search_progress)
 
     com = Com(
         link=search_result.link, params=params, next_channels=next_channels, fext_channels=fext_channels,

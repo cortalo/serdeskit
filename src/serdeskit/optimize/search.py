@@ -9,7 +9,7 @@ Link — this is the layer above that decides which Link to feed it.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -60,9 +60,20 @@ class EqualizationSearch:
     next_channels: Sequence[Channel] = ()
     fext_channels: Sequence[Channel] = ()
 
-    def search(self) -> SearchResult:
+    def search(self, on_progress: Callable[[int, int], None] | None = None) -> SearchResult:
         """Runs the full grid, returning the combination with the
         largest figure_of_merit.
+
+        Args:
+            on_progress: Called as `on_progress(done, total)` after each
+                grid point is evaluated, `done` counting from 1 — a slow
+                real search (e.g. a full standard's grid against a real
+                channel) has no other visible progress otherwise. Kept
+                optional, not a logger this class reaches for itself:
+                the domain layer stays presentation-free (see this
+                package's own module docstring), same reasoning as
+                `Link`/`Com` never importing matplotlib — a caller that
+                wants a progress bar/print supplies one.
 
         Returns:
             The winning combination — never empty, since the all-zero
@@ -75,6 +86,8 @@ class EqualizationSearch:
 
         all_zero = np.zeros(len(self.tx_taps_bounds))
         candidates = [all_zero, *tx_tap_combinations(self.tx_taps_bounds, self.c0_min)]
+        total = len(self.shelf_gain_candidates) * len(self.dc_gain_candidates) * len(candidates)
+        done = 0
 
         # NEXT aggressors always use this same flat, unequalized Tx FFE
         # (never the victim's own candidate taps) — but their pulse
@@ -134,6 +147,10 @@ class EqualizationSearch:
                         best = SearchResult(
                             tx_taps=tx_taps, dc_gain_db=dc_gain_db, shelf_gain_db=shelf_gain_db, fom=fom, link=link,
                         )
+
+                    done += 1
+                    if on_progress is not None:
+                        on_progress(done, total)
 
         assert best is not None  # candidates always has at least the all-zero entry
         return best

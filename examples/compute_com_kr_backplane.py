@@ -53,6 +53,7 @@ Run: python examples/compute_com_kr_backplane.py
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -127,6 +128,18 @@ STANDARD = ComStandard(
 
 
 def main() -> None:
+    start = time.monotonic()
+
+    def _progress(done: int, total: int) -> None:
+        elapsed = time.monotonic() - start
+        per_candidate = elapsed / done
+        remaining = per_candidate * (total - done)
+        print(
+            f"  search: {done}/{total}  ({elapsed:.0f}s elapsed, ~{remaining:.0f}s left)",
+            end="\r" if done < total else "\n",
+            flush=True,
+        )
+
     evaluation = evaluate_channel(
         STANDARD,
         thru_path=DATA / "Std_BP_12inch_Meg7_Thru_B56.s4p",
@@ -148,6 +161,7 @@ def main() -> None:
         # peters_*/Case4_* files' interleaved (TX+, RX+, TX-, RX-) order
         # differential_network assumes by default.
         port_order=(0, 1, 2, 3),
+        on_search_progress=_progress,
     )
     result = evaluation.result
 
