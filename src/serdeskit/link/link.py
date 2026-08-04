@@ -53,6 +53,15 @@ class RxAfe(Protocol):
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 
+class RxFfe(Protocol):
+    """What Link needs from an Rx FFE — same shape as RxAfe, but its own
+    Protocol rather than reusing it: RxAfe is a fixed, always-present
+    stage, while an Rx FFE may genuinely be absent (see Link.rx_ffe).
+    """
+
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class EyeData:
     """One column per unit-interval-pair trace, ready to overlay-plot."""
@@ -70,18 +79,27 @@ class LinkResult:
 @dataclass
 class Link:
     """channel is the stage the bit-domain `simulate()` pipeline runs the
-    launched signal through. `ctle`/`ffe`/`rx_afe` are only used by
-    `ffe_channel_ctle_pulse_response()`'s frequency-domain composition —
-    optional since `simulate()` doesn't need them; left unset and then
+    launched signal through. `ctle`/`ffe`/`rx_afe`/`rx_ffe` are only used
+    by `ffe_channel_ctle_pulse_response()`'s frequency-domain composition
+    — optional since `simulate()` doesn't need them; left unset and then
     used there raises a plain AttributeError, which is fine (a caller
     building a pulse response without equalization is a caller error, not
     a case worth a defensive check).
+
+    A link with no real Rx FFE still needs an `rx_ffe` set: a single
+    unity tap (`RxFfe` with one tap of weight 1.0) is the identity —
+    PyChOpMarg's own H() skips its Hrx factor entirely rather than
+    treating "none" as a trivial one-tap case, but the two are
+    equivalent, and this way every equalization stage here follows the
+    same "set it, even trivially" rule instead of rx_ffe alone needing a
+    conditional.
     """
 
     channel: Channel
     ctle: Ctle | None = None
     ffe: Ffe | None = None
     rx_afe: RxAfe | None = None
+    rx_ffe: RxFfe | None = None
 
     def simulate(self, bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> LinkResult:
         """bits is one value per symbol; symbol_rate is what turns it into a
@@ -125,6 +143,7 @@ class Link:
             * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
             * self.ffe.transfer_function(grid.f)  # type: ignore[union-attr]
             * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.rx_ffe.transfer_function(grid.f)  # type: ignore[union-attr]
         )
 
         return grid.pulse_response(h)

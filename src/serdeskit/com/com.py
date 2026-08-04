@@ -54,6 +54,8 @@ class ComResult:
     sigma_jitter: float  # sqrt(varJ), (93A-31)
     sigma_noise: float  # sqrt(varN), (93A-35)
     sigma_gaussian: float  # sqrt(varG) = the three above combined, (93A-41)
+    sigma_isi: float  # sqrt(varISI): (93A-31)'s variance formula applied to residual ISI
+    sigma_crosstalk: float  # sqrt(varXT): the combined crosstalk PMF's own variance, sum(y^2 * p)
     voltage_grid: npt.NDArray[np.float64]  # y (V) the PMFs below are on
     noise_pmf: npt.NDArray[np.float64]  # the combined interference+noise PMF, (93A-45)
 
@@ -116,8 +118,10 @@ class Com:
             filter_samples(p.a_dd * slopes, 1.1 * signal_amplitude), p.levels, y
         )
 
-        rx_response = self.link.ctle.transfer_function(grid.f) * self.link.rx_afe.transfer_function(  # type: ignore[union-attr]
-            grid.f
+        rx_response = (
+            self.link.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.link.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.link.rx_ffe.transfer_function(grid.f)  # type: ignore[union-attr]
         )
         var_tx, var_jitter, var_noise = _gaussian_variances(
             pulse_response.cursor_value, slopes, rx_response, p
@@ -127,6 +131,7 @@ class Com:
 
         residual = pulse_response.residual_isi(p.dfe_min, p.dfe_max)  # (93A-26)/(93A-27)
         p_isi = delta_pmf(filter_samples(residual, 1.1 * signal_amplitude), p.levels, y)
+        var_isi = p.level_variance * float((residual**2).sum())  # (93A-31), applied to residual ISI
 
         # Each aggressor: scale to its launch amplitude (A_ne/A_fe — same
         # rule as the victim's A_v), pick its worst-case sub-UI phase
@@ -161,8 +166,10 @@ class Com:
         # its own (a scalar divide commutes with a subsequent same-mode
         # convolution+crop) — only this grouping does.
         p_total = combine_pmfs(p_gaussian, p_jitter, p_isi)  # (93A-42)/(93A-43)
+        var_crosstalk = 0.0
         if p_aggressors:
             p_crosstalk = combine_pmfs(*p_aggressors)  # (93A-44): pXT
+            var_crosstalk = float((y**2 * p_crosstalk).sum())
             p_total = combine_pmfs(p_total, p_crosstalk)  # (93A-45)
 
         noise_amplitude = noise_margin(p_total, y, p.der_0)
@@ -175,6 +182,8 @@ class Com:
             sigma_jitter=float(np.sqrt(var_jitter)),
             sigma_noise=float(np.sqrt(var_noise)),
             sigma_gaussian=float(np.sqrt(var_gaussian)),
+            sigma_isi=float(np.sqrt(var_isi)),
+            sigma_crosstalk=float(np.sqrt(var_crosstalk)),
             voltage_grid=y,
             noise_pmf=p_total,
         )
@@ -182,13 +191,25 @@ class Com:
     def _next_links(self) -> list[Link]:
         flat_ffe = _flat_ffe(1.0 / self.params.baud_rate)
         return [
-            Link(channel=channel, ctle=self.link.ctle, ffe=flat_ffe, rx_afe=self.link.rx_afe)
+            Link(
+                channel=channel,
+                ctle=self.link.ctle,
+                ffe=flat_ffe,
+                rx_afe=self.link.rx_afe,
+                rx_ffe=self.link.rx_ffe,
+            )
             for channel in self.next_channels
         ]
 
     def _fext_links(self) -> list[Link]:
         return [
-            Link(channel=channel, ctle=self.link.ctle, ffe=self.link.ffe, rx_afe=self.link.rx_afe)
+            Link(
+                channel=channel,
+                ctle=self.link.ctle,
+                ffe=self.link.ffe,
+                rx_afe=self.link.rx_afe,
+                rx_ffe=self.link.rx_ffe,
+            )
             for channel in self.fext_channels
         ]
 

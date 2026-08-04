@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+import pychopmarg.com
 import pytest
 import skrf
 from pychopmarg.com import COM
@@ -19,6 +20,7 @@ from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Link, SystemGrid
 from serdeskit.rx_afe import RxAfeButterworth
+from serdeskit.rx_ffe import TapWeightRxFfe
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -132,6 +134,9 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
             tap_weights=tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / baud_rate
         ),
         rx_afe=RxAfeButterworth(cutoff_freq=cfg.f_r * baud_rate),
+        # A single unity tap is the identity — matches this test's own
+        # rx_taps=np.array([]) on the PyChOpMarg side (both mean "no Rx FFE").
+        rx_ffe=TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=1.0 / baud_rate),
     )
 
     grid = SystemGrid.build(
@@ -144,4 +149,70 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
     # implementations agree to floating-point noise (~1e-17 observed against
     # a ~4e-2 peak) rather than merely closely — so this asserts genuine
     # equivalence of the whole (93A-19)+(93A-24) chain, not just proximity.
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-15)
+
+
+@pytest.mark.usefixtures("exact_pi")
+def test_matches_pychopmarg_end_to_end_with_rx_ffe(
+    synthetic_s4p: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same comparison as test_matches_pychopmarg_end_to_end, but with a
+    non-empty rx_taps — the case that test deliberately excludes (Rx FFE
+    didn't exist in this project yet when it was written).
+
+    `Hffe_Rx`'s own phase matrix is built inside pychopmarg.com using a
+    TWOPI bound at import time from pychopmarg.common — a different
+    binding from the one `exact_pi` patches (pychopmarg.utility.filter's)
+    — so it needs its own patch here, on top of `exact_pi`, for the same
+    exact-agreement reason `exact_pi` exists at all.
+    """
+    monkeypatch.setattr(pychopmarg.com, "PI", np.pi)
+    monkeypatch.setattr(pychopmarg.com, "TWOPI", 2 * np.pi)
+
+    cfg = _com_params()
+    com = COM(cfg, {"THRU": [synthetic_s4p], "FEXT": [], "NEXT": []}, debug=True)
+    tx_taps = np.array(com._tx_combs[TX_COMB_IX])
+    rx_taps = np.array([0.05, 1.0, -0.1])  # cursor at index 1, arbitrary otherwise
+    # Hffe_Rx asserts len(taps) == self.nRxTaps and multiplies against
+    # rx_ffe_phase_matrix — both still reflect cfg's own (16-tap) Rx FFE
+    # search-grid configuration from __init__, so both need rebuilding
+    # for this test's 3-tap array.
+    com.nRxTaps = len(rx_taps)
+    ns = np.arange(len(rx_taps))
+    com.rx_ffe_phase_matrix = np.exp(np.outer(ns, -1j * 2 * np.pi * com.ui * com.freqs))
+
+    _, h21_nopkg = com.chnls_noPkg[0]
+    h = com.H(
+        h21_nopkg,
+        TX_COMB_IX,
+        Hctf=com.calc_Hctf(G_DC, G_DC2),
+        rx_taps=rx_taps,
+        dfe_taps=np.array([]),
+    )
+    expected = np.asarray(com.pulse_resp(h), dtype=np.float64)
+
+    baud_rate = cfg.fb * 1e9
+    link = Link(
+        channel=SParameterChannel.from_touchstone(str(synthetic_s4p)),
+        ctle=TwoStageCtle(
+            zero_freq=cfg.f_z * 1e9,
+            pole1_freq=cfg.f_p1 * 1e9,
+            pole2_freq=cfg.f_p2 * 1e9,
+            shelf_freq=cfg.f_LF * 1e9,
+            dc_gain_db=G_DC,
+            shelf_gain_db=G_DC2,
+        ),
+        ffe=TapWeightFfe(
+            tap_weights=tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / baud_rate
+        ),
+        rx_afe=RxAfeButterworth(cutoff_freq=cfg.f_r * baud_rate),
+        rx_ffe=TapWeightRxFfe(tap_weights=rx_taps, tap_delay=1.0 / baud_rate),
+    )
+
+    grid = SystemGrid.build(
+        baud_rate=baud_rate, freq_step=cfg.fstep * 1e9, samples_per_ui=cfg.M
+    )
+    actual = link.ffe_channel_ctle_pulse_response(grid).samples
+
+    assert actual.shape == expected.shape
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-15)

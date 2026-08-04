@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+import pychopmarg.com
 import pychopmarg.utility.filter
 import pytest
 import skrf
@@ -28,6 +29,7 @@ from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Link
 from serdeskit.rx_afe import RxAfeButterworth
+from serdeskit.rx_ffe import TapWeightRxFfe
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -46,6 +48,8 @@ class Reference:
     sigma_jitter: float
     sigma_noise: float
     sigma_gaussian: float
+    sigma_isi: float
+    sigma_crosstalk: float
     tx_taps: npt.NDArray[np.float64]
     channel_path: Path
     next_channel_paths: list[Path]
@@ -58,6 +62,7 @@ class Reference:
     victim_amplitude: float
     a_ne: float
     a_fe: float
+    rx_taps: npt.NDArray[np.float64]
     snr_tx: float
     sigma_rj: float
     eta_0: float
@@ -76,20 +81,25 @@ def reference() -> Iterator[Reference]:
 
     Setup matches tests/link/test_pulse_response_vs_pychopmarg.py — see
     there for why IEEE_8023dj's package fields need reshaping and why
-    fstep is coarsened. `nRxTaps = 0` and PRZF mode keep calc_noise on the
-    paths this project has: no Rx FFE, and the closed-form (93A-30) Tx
-    noise term rather than MMSE's NoiseCalc.
+    fstep is coarsened. PRZF mode keeps calc_noise on the noise-term path
+    this project has: the closed-form (93A-30) Tx noise term rather than
+    MMSE's NoiseCalc.
 
     Applies the full-precision PI patch itself rather than requesting the
     `exact_pi` fixture: that one is function-scoped, and pytest sets
     higher-scoped fixtures up first, so this would otherwise be computed
     with PyChOpMarg's truncated PI while the code under test used np.pi —
     a ~2e-6 relative discrepancy with no bearing on correctness, sitting
-    exactly where a real one would show up.
+    exactly where a real one would show up. Also patches pychopmarg.com's
+    own PI/TWOPI binding (a separate one from pychopmarg.utility.filter's
+    — see test_pulse_response_vs_pychopmarg.py's Rx FFE test) since
+    Hffe_Rx's phase matrix, built during COM.__init__, needs it too.
     """
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(pychopmarg.utility.filter, "PI", np.pi)
         mp.setattr(pychopmarg.utility.filter, "TWOPI", 2 * np.pi)
+        mp.setattr(pychopmarg.com, "PI", np.pi)
+        mp.setattr(pychopmarg.com, "TWOPI", 2 * np.pi)
         yield _build_reference()
 
 
@@ -150,8 +160,14 @@ def _build_reference() -> Reference:
     )
     com.gDC, com.gDC2 = G_DC, G_DC2
     com.tx_ix = TX_COMB_IX
-    com.nRxTaps = 0
-    com.rx_taps = np.array([])
+    # A real (non-identity) Rx FFE: cursor 1.0 at index 5 (com.nRxTaps=16,
+    # com.nRxPreTaps=5, both cfg's own defaults — matching lengths means
+    # com's already-built rx_ffe_phase_matrix doesn't need rebuilding).
+    rx_taps = np.zeros(16)
+    rx_taps[5] = 1.0
+    rx_taps[4] = 0.03
+    rx_taps[6] = -0.05
+    com.rx_taps = rx_taps
     com.dfe_taps = np.array([])
     com.opt_mode = OptMode.PRZF
     # calc_noise() would otherwise use `chnls`, which includes the package
@@ -175,6 +191,8 @@ def _build_reference() -> Reference:
         sigma_jitter=float(r["sigma_J"]),
         sigma_noise=float(r["sigma_N"]),
         sigma_gaussian=float(r["sigma_G"]),
+        sigma_isi=float(r["sigma_ISI"]),
+        sigma_crosstalk=float(r["sigma_XT"]),
         tx_taps=np.array(com._tx_combs[TX_COMB_IX]),
         channel_path=thru_path,
         next_channel_paths=[next1_path, next2_path],
@@ -187,6 +205,7 @@ def _build_reference() -> Reference:
         victim_amplitude=float(cfg.A_v),
         a_ne=float(cfg.A_ne),
         a_fe=float(cfg.A_fe),
+        rx_taps=rx_taps,
         snr_tx=float(cfg.SNR_TX),
         sigma_rj=float(cfg.sigma_Rj),
         eta_0=float(cfg.eta_0),
@@ -228,6 +247,7 @@ def _build_com(ref: Reference) -> Com:
             tap_delay=1.0 / ref.baud_rate,
         ),
         rx_afe=RxAfeButterworth(cutoff_freq=ref.afe_cutoff),
+        rx_ffe=TapWeightRxFfe(tap_weights=ref.rx_taps, tap_delay=1.0 / ref.baud_rate),
     )
     params = ComParams(
         baud_rate=ref.baud_rate,
@@ -294,6 +314,11 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     assert result.sigma_jitter == pytest.approx(reference.sigma_jitter, rel=1e-9)
     assert result.sigma_noise == pytest.approx(reference.sigma_noise, rel=1e-9)
     assert result.sigma_gaussian == pytest.approx(reference.sigma_gaussian, rel=1e-9)
+    assert result.sigma_isi == pytest.approx(reference.sigma_isi, rel=1e-9)
+    # sigma_crosstalk excluded here: unlike the closed-form sigmas above,
+    # it's derived from the combined crosstalk PMF, so it carries the same
+    # chained-convolution floating-point noise as noise_pmf below — see
+    # test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors.
 
 
 @pytest.mark.usefixtures("exact_pi")
@@ -315,6 +340,7 @@ def test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors(reference: Refer
     # — still far tighter than the 2.6% a genuinely wrong grouping
     # produced during development).
     np.testing.assert_allclose(result.noise_pmf, reference.noise_pmf, rtol=1e-4, atol=1e-7)
+    assert result.sigma_crosstalk == pytest.approx(reference.sigma_crosstalk, rel=1e-4)
 
 
 @pytest.mark.usefixtures("exact_pi")
