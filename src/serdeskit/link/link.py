@@ -6,7 +6,6 @@ tests.
 """
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -23,17 +22,10 @@ class Channel(Protocol):
     response for COM-style pulse-response generation (Link.
     sbr_pulse_response). Satisfied implicitly — a concrete channel class
     needs no relation to this Protocol beyond having matching methods.
-
-    `__hash__` is part of the contract (not just inherited from `object`
-    implicitly) because `_uneq_truncated_impulse_response` below caches
-    on channel identity — a concrete Channel is expected to be frozen/
-    immutable (see SParameterChannel) so that identity-based caching can
-    never return a stale result.
     """
 
     def process(self, sig: Signal) -> Signal: ...
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
-    def __hash__(self) -> int: ...
 
 
 class Ctle(Protocol):
@@ -63,21 +55,18 @@ class TxFilter(Protocol):
     test_risetime_vs_matlab.py`, docs/known-issues.md's "full composed
     pulse response" entry) — this project previously assumed,
     incorrectly, that a Tx risetime filter "has no role in the pulse
-    response". `__hash__` is part of the contract for the same reason as
-    Channel's own — see there.
+    response".
     """
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
-    def __hash__(self) -> int: ...
 
 
 class RxAfe(Protocol):
     """What Link needs from an Rx analog front-end — same situation as
-    TxFilter, frequency-domain only, `__hash__` included.
+    TxFilter, frequency-domain only.
     """
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
-    def __hash__(self) -> int: ...
 
 
 class RxFfe(Protocol):
@@ -107,21 +96,13 @@ class LinkResult:
     eye: EyeData
 
 
-@functools.lru_cache(maxsize=128)
 def _uneq_truncated_impulse_response(
     channel: Channel, tx_filter: TxFilter, rx_afe: RxAfe, grid: SystemGrid
 ) -> Signal:
     """`channel + tx_filter + rx_afe`, truncated impulse response --
-    `sbr_pulse_response()`'s own first step, factored out and cached: it
-    doesn't depend on ctle/ffe/rx_ffe at all, so a grid search sweeping
-    those (src/serdeskit/optimize/search.py) would otherwise redo this
-    same IFFT+truncate on every one of its (CTLE gain x Tx tap) grid
-    points, for every channel (victim and every NEXT/FEXT aggressor)
-    that doesn't actually change between them. Safe to cache across Link
-    instances: keyed on the stage objects themselves (identity, not
-    value), all four of which are frozen/immutable (Channel
-    implementations, TxFilter, RxAfe, SystemGrid) so a cache hit can
-    never return a stale result.
+    `sbr_pulse_response()`'s own first step, factored out since CTLE's own
+    time-domain path (`Ctle.process()`) needs this impulse response before
+    `box_car_integrate()` turns it into a pulse response.
     """
     h = channel.transfer_function(grid.f) * tx_filter.transfer_function(grid.f) * rx_afe.transfer_function(grid.f)
     return grid.truncated_impulse_response(h)
@@ -178,14 +159,11 @@ class Link:
         shape, Rx-side taps). Requires `self.ctle`/`self.ffe`/`self.
         tx_filter`/`self.rx_afe`/`self.rx_ffe` to be set.
         """
-        # No `# type: ignore[union-attr]` needed here (unlike the None-
-        # unsafe accesses below): @functools.lru_cache's own typeshed
-        # stub types every argument as plain Hashable, not this
-        # function's real (Channel, TxFilter, RxAfe, SystemGrid)
-        # signature -- so mypy can't see the Optional-ness here to flag
-        # it either. Still a genuine caller error at runtime if unset
-        # (AttributeError on None), same as the others.
-        impulse = _uneq_truncated_impulse_response(self.channel, self.tx_filter, self.rx_afe, grid)
+        # self.tx_filter/self.rx_afe are Optional; a genuine caller error at
+        # runtime if unset (AttributeError on None), same as the others below.
+        impulse = _uneq_truncated_impulse_response(
+            self.channel, self.tx_filter, self.rx_afe, grid  # type: ignore[arg-type]
+        )
         ctle_impulse = self.ctle.process(impulse)  # type: ignore[union-attr]
         pulse = grid.box_car_integrate(ctle_impulse)
         eq_pulse = self.ffe.process(pulse)  # type: ignore[union-attr]

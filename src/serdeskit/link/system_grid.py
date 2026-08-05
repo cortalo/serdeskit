@@ -21,26 +21,12 @@ import numpy.typing as npt
 from serdeskit.common.types import Signal
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SystemGrid:
     t: npt.NDArray[np.float64]
     f: npt.NDArray[np.float64]
     x_sinc: npt.NDArray[np.float64]
     samples_per_ui: int
-
-    def __hash__(self) -> int:
-        """Identity, not the dataclass-default field-value hash: that one
-        would call hash() on `t`/`f`/`x_sinc`, and numpy arrays aren't
-        hashable at all -- a bare `@dataclass(frozen=True)` SystemGrid is
-        unhashable out of the box. Needed so a SystemGrid can be a cache
-        key (see link.Link.sbr_pulse_response's lru_cache) without ever
-        risking the ambiguous-truth-value error a value-based `__eq__`
-        would hit comparing `t`/`f`/`x_sinc` arrays on a hash collision.
-        """
-        return id(self)
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
 
     @classmethod
     def build(cls, baud_rate: float, freq_step: float, samples_per_ui: int) -> SystemGrid:
@@ -69,15 +55,6 @@ class SystemGrid:
         f = np.arange(0.0, fmax + freq_step, freq_step)
 
         x_sinc = int(ui / t[1]) * np.sinc(ui * f)
-
-        # `frozen=True` only blocks reassigning `t`/`f`/`x_sinc` themselves
-        # (`grid.f = ...`), not in-place mutation of the arrays they point
-        # to (`grid.f[0] = ...` would otherwise still silently succeed) --
-        # this closes that gap so identity-based caching keyed on a
-        # SystemGrid (see link.Link.sbr_pulse_response) can't be
-        # invalidated out from under it without an error.
-        for array in (t, f, x_sinc):
-            array.setflags(write=False)
 
         return cls(t=t, f=f, x_sinc=x_sinc, samples_per_ui=samples_per_ui)
 

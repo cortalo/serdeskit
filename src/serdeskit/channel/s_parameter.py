@@ -63,7 +63,7 @@ def differential_network(
     return network
 
 
-@dataclass(frozen=True)
+@dataclass
 class SParameterChannel:
     """`network` (a 4-port, converted to its differential two-port via
     `differential_network` -- see there for the port-order assumption; a
@@ -74,33 +74,15 @@ class SParameterChannel:
     account for reflections at imperfectly-terminated ends. Default 0.0
     (perfectly matched, no reflection) makes `transfer_function` reduce
     to plain S21.
-
-    Frozen and identity-hashed (`__hash__`/`__eq__` below), same
-    reasoning as SystemGrid/TapWeightFfe: lets a channel be a cache key
-    (see link.Link.sbr_pulse_response) without the risk of `gamma1`/
-    `gamma2` changing in place under an equalization search that expects
-    to reuse the same channel across many candidates unchanged.
-    `transfer_function`'s own internal `_cache` is the one exception —
-    set via `object.__setattr__` since it's not a real field, just this
-    instance's private memoization state.
     """
 
     network: skrf.Network
     gamma1: float = 0.0
     gamma2: float = 0.0
     _network: skrf.Network = field(init=False, repr=False, compare=False)
-    _cache: tuple[npt.NDArray[np.float64], npt.NDArray[np.complex128]] | None = field(
-        init=False, repr=False, compare=False, default=None
-    )
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_network", differential_network(self.network))
-
-    def __hash__(self) -> int:
-        return id(self)
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
+        self._network = differential_network(self.network)
 
     @classmethod
     def from_touchstone(cls, path: str) -> SParameterChannel:
@@ -138,28 +120,7 @@ class SParameterChannel:
         a real channel (`matlab_golden/data/channel_plus_package_c2c_thru.csv`,
         `tests/channel/test_transfer_function_vs_matlab.py`): matches to
         float precision without the taper.
-
-        Cached against the exact `freqs` array object last used: an
-        equalization search calls this same channel with the same
-        `SystemGrid.f` object many times over (CTLE gain/Tx FFE taps are
-        what vary between candidates, not the channel), and recomputing
-        from scratch each time was pure waste — profiling
-        examples/compute_com_kr_backplane.py's own search found this
-        `interpolate()` call alone costing ~0.44s each, the dominant
-        cost of the whole search, exactly the step MATLAB's own tool
-        computes once per channel before its search loop rather than
-        once per candidate. Caching on object identity (`is`), not
-        equality, avoids hashing the frequency array on every call;
-        holding the reference in `_cache` keeps it alive so identity
-        can't be confused with an unrelated, since-freed array reusing
-        the same id(). `gamma1`/`gamma2` no longer need checking here
-        (unlike before this class was frozen): they can't change out
-        from under a cached result anymore.
         """
-        cache = self._cache
-        if cache is not None and cache[0] is freqs:
-            return cache[1]
-
         in_band = self._network.extrapolate_to_dc().interpolate(
             freqs[freqs <= self._network.f[-1]], kind="cubic", coords="polar",
             basis="t", assume_sorted=True,
@@ -173,9 +134,7 @@ class SParameterChannel:
         g1, g2 = self.gamma1, self.gamma2
         d_s = s11 * s22 - s12 * s21
         h = (s21 * (1 - g1) * (1 + g2)) / (1 - s11 * g1 - s22 * g2 + g1 * g2 * d_s)
-        h = np.asarray(h, dtype=np.complex128)
-        object.__setattr__(self, "_cache", (freqs, h))
-        return h
+        return np.asarray(h, dtype=np.complex128)
 
     def impulse_response(
         self, dt: float | None = None
