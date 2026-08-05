@@ -73,19 +73,17 @@ class SystemGrid:
         fs = 1.0 / (self.t[1] - self.t[0])
         return Signal(samples=p, fs=fs, t0=0.0)
 
-    def truncated_pulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
-        """MATLAB COM3.70's own two-step recipe, not this class's usual
-        single-IFFT one — see `s21_to_impulse_DC`
-        (`com_ieee8023_93a_370.m:9895-9964`) + the box-car integration
-        right after it (`:930`): IFFT to an impulse response, truncate
-        once its magnitude decays below `threshold * peak` (MATLAB's own
-        default, `OP.impulse_response_truncation_threshold`), *then*
-        box-car-integrate — via linear (causal, non-circular) convolution,
-        since the truncated array is no longer the periodic record
-        `pulse_response()` assumes. Exists only for `Link.
-        uneq_pulse_response()`, to test whether this — not CTLE/FFE's own
-        time- vs frequency-domain composition — explains this project's
-        residual divergence from MATLAB (docs/known-issues.md).
+    def truncated_impulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
+        """MATLAB COM3.70's own `s21_to_impulse_DC`
+        (`com_ieee8023_93a_370.m:9895-9964`), not this class's usual
+        `pulse_response()`: IFFT `h`, then truncate once the result's
+        magnitude decays below `threshold * peak` (MATLAB's own default,
+        `OP.impulse_response_truncation_threshold`) — the result is no
+        longer the periodic record `pulse_response()` assumes. Not a
+        pulse response yet — `box_car_integrate()` is the next step
+        MATLAB's own pipeline takes; kept separate here since CTLE's own
+        time-domain path (`Ctle.process()`) runs on the impulse response,
+        before that box-car integration.
 
         Args:
             h: The system's transfer function, evaluated on `self.f`.
@@ -93,14 +91,32 @@ class SystemGrid:
                 of its own peak. Default matches MATLAB's own default.
 
         Returns:
-            The (shorter than `self.t`) pulse response, as a Signal.
+            The (shorter than `self.t`) impulse response, as a Signal.
         """
         impulse = np.fft.irfft(h)[: len(self.t)]
         peak = np.max(np.abs(impulse))
         last = int(np.max(np.nonzero(np.abs(impulse) > peak * threshold)))
-        truncated = impulse[: last + 1]
-
-        box = np.ones(self.samples_per_ui)
-        p = np.convolve(truncated, box, mode="full")[: len(truncated)]
         fs = 1.0 / (self.t[1] - self.t[0])
-        return Signal(samples=p, fs=fs, t0=0.0)
+        return Signal(samples=impulse[: last + 1], fs=fs, t0=0.0)
+
+    def box_car_integrate(self, sig: Signal) -> Signal:
+        """Integrate `sig` over one UI (`self.samples_per_ui` samples) via
+        linear (causal, non-circular) convolution — matching MATLAB's own
+        `filter(ones(1,samples_per_ui),1,...)` (`com_ieee8023_93a_370.m:930`),
+        the step that turns an impulse response into a pulse response.
+        Linear, not `pulse_response()`'s circular treatment, because
+        `sig` (from `truncated_impulse_response()`, or `Ctle.process()`'s
+        output on it) is no longer a periodic record.
+        """
+        box = np.ones(self.samples_per_ui)
+        p = np.convolve(sig.samples, box, mode="full")[: len(sig.samples)]
+        return Signal(samples=p, fs=sig.fs, t0=sig.t0)
+
+    def truncated_pulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
+        """`truncated_impulse_response()` then `box_car_integrate()` —
+        MATLAB's own two-step recipe end to end, with no CTLE/FFE in
+        between. Exists for `Link.uneq_pulse_response()`; see
+        `truncated_impulse_response()`'s own docstring for why CTLE needs
+        these as two separate steps rather than this one.
+        """
+        return self.box_car_integrate(self.truncated_impulse_response(h, threshold))

@@ -149,6 +149,35 @@ class Link:
         )
         return grid.truncated_pulse_response(h)
 
+    def sbr_pulse_response(self, grid: SystemGrid) -> Signal:
+        """MATLAB COM3.70's real computation, end to end — named after its
+        own `sbr` (`com_ieee8023_93a_370.m:6077`/`:7132`) — not this
+        class's own frequency-domain `ffe_channel_ctle_pulse_response()`.
+        Continues where `uneq_pulse_response()` leaves off, but as two
+        separate steps rather than one call, since CTLE's own time-domain
+        path (`Ctle.process()`) needs the impulse response, before
+        `box_car_integrate()` turns it into a pulse response: `channel +
+        tx_filter + rx_afe` (truncated impulse response) -> `ctle.process()`
+        (time-domain IIR, twice, per MATLAB's own CL120d two-stage
+        structure) -> box-car integration -> `ffe.process()` (time-domain
+        circular-shift-sum). Requires `self.ctle`/`self.ffe`/`self.
+        tx_filter`/`self.rx_afe` to be set.
+
+        No `rx_ffe` here: MATLAB's own `sbr` construction has no separate
+        Rx FFE step for this project's real config (a single unity tap),
+        so there's nothing to verify against yet — see docs/
+        known-issues.md's `TapWeightRxFfe` entry.
+        """
+        h = (
+            self.channel.transfer_function(grid.f)
+            * self.tx_filter.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+        )
+        impulse = grid.truncated_impulse_response(h)
+        ctle_impulse = self.ctle.process(impulse)  # type: ignore[union-attr]
+        pulse = grid.box_car_integrate(ctle_impulse)
+        return self.ffe.process(pulse)  # type: ignore[union-attr]
+
     def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
         """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
         ctle's, ffe's, rx_afe's, and rx_ffe's transfer functions on a

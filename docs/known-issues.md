@@ -388,12 +388,29 @@ test now passes at **0/321 mismatched**, peak indices align exactly
 (0 samples apart, vs. 15 before), peak value within 0.0004%, worst point
 in the window within 0.0006% of peak — floating-point-level agreement.
 
-**Not yet done**: `ffe_channel_ctle_pulse_response()` (the full composed
-pulse response, `tests/link/test_pulse_response_vs_matlab_c2c.py`) still
-uses the untouched `pulse_response()` and still fails at its original
-~1-2% residual — this fix only closed the gap for the pre-CTLE/FFE
-portion. Given how completely it closed *that* gap, the same
-truncate-then-time-domain-chain treatment extended through CTLE (`TD_
-CTLE`) and FFE (`FFE.m`'s circular-shift-sum, no longer circular once the
-record isn't periodic) is now the clear next step, not just one
-candidate among several.
+**Update: full composed pulse response also closed, via a new time-domain path.**
+`ffe_channel_ctle_pulse_response()` (frequency-domain composition, one
+IFFT) still uses the untouched `pulse_response()` and still fails at its
+original ~1-2% residual — left as-is, still documenting a real,
+unexplained gap in that specific method.
+
+But the residual isn't actually about CTLE/FFE's *own* formulas — it's
+that MATLAB never composes this in the frequency domain at all past the
+"uneq" stage. `TwoStageCtle.process()` and `TapWeightFfe.process()` are
+now real implementations (previously `NotImplementedError` stubs),
+TDD-verified against MATLAB's own `TD_CTLE` and `FFE.m` directly, each to
+floating-point precision (`tests/ctle/test_two_stage_process_vs_matlab.py`,
+`tests/ffe/test_tap_weight_process_vs_matlab.py`). `Link.
+sbr_pulse_response()` chains them exactly the way MATLAB's real pipeline
+does — `truncated_impulse_response()` → `ctle.process()` (twice, CL120d's
+two stages) → `box_car_integrate()` → `ffe.process()` — and matches
+MATLAB's `best_sbr` end to end: peak value within 0.0002%, 0/321 samples
+outside tolerance in a ±5 UI window (`tests/link/
+test_sbr_pulse_response_vs_matlab_c2c.py`). The "S-parameter
+extrapolation" and "time- vs frequency-domain composition" hypotheses
+above are superseded by this — composition method was the whole story.
+
+`sbr_pulse_response()` is a new, additional method, not a replacement for
+`ffe_channel_ctle_pulse_response()` — the latter stays as-is (still
+useful, still frequency-domain, still has its own known residual) rather
+than being rewritten in place.

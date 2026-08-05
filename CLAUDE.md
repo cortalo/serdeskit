@@ -123,15 +123,16 @@ writeups.
   clip precursor samples if a config's cursor lands near array index 0.
 - `pmf.noise_margin` silently saturates at the voltage grid's edge —
   confirmed root cause, not yet fixed.
-- The full composed pulse response was missing a Tx risetime filter
-  (fixed — see "Verified against MATLAB" above). A residual (~1-2%)
-  remained after that; root-caused to `SystemGrid.pulse_response()`
-  never truncating its impulse response the way MATLAB's own
-  `s21_to_impulse_DC` does before box-car-integrating it. Fixed for the
-  pre-CTLE/FFE portion (`SystemGrid.truncated_pulse_response()`, now
-  floating-point-exact there); the full composed response still uses the
-  untouched `pulse_response()` and still has the residual — extending
-  the same treatment through CTLE/FFE is the next step.
+- ~~The full composed pulse response was missing a Tx risetime filter~~ —
+  fixed, then a ~1-2% residual, also fixed: MATLAB composes CTLE/FFE in
+  the time domain, not frequency-domain multiplication like this
+  project's `ffe_channel_ctle_pulse_response()`. `Ctle.process()`/
+  `Ffe.process()` are now real (TDD-verified against `TD_CTLE`/`FFE.m`),
+  and `Link.sbr_pulse_response()` chains them the way MATLAB really does
+  — matches MATLAB's `best_sbr` to floating-point precision.
+  `ffe_channel_ctle_pulse_response()` itself is untouched and still has
+  the residual; `sbr_pulse_response()` is the new, separate method to
+  use instead. Full detail in `docs/known-issues.md`.
 - **Out of scope for now**: search/optimization-level alignment
   (`EqualizationSearch`, `figure_of_merit`) against MATLAB's own
   `opt_eq`/`calc_fom`.
