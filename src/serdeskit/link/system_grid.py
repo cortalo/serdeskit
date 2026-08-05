@@ -5,9 +5,11 @@ single transmitted symbol actually is (zero-order-hold, not an idealized
 delta impulse — the same physical picture link.py's own `_upsample_bits`
 already encodes in the time domain).
 
-Not itself a pulse response: `pulse_response()` is the later step that
-multiplies x_sinc by a system's actual transfer function (channel * CTLE
-* FFE * ...) and inverse-transforms the result back to the time domain.
+Not itself a pulse response: `truncated_impulse_response()` +
+`box_car_integrate()` are the later steps (`link.Link.sbr_pulse_response`
+chains them together with the equalization stages in between) that turn
+x_sinc and a system's actual transfer function (channel * CTLE * FFE *
+...) into one.
 """
 from __future__ import annotations
 
@@ -25,6 +27,20 @@ class SystemGrid:
     f: npt.NDArray[np.float64]
     x_sinc: npt.NDArray[np.float64]
     samples_per_ui: int
+
+    def __hash__(self) -> int:
+        """Identity, not the dataclass-default field-value hash: that one
+        would call hash() on `t`/`f`/`x_sinc`, and numpy arrays aren't
+        hashable at all -- a bare `@dataclass(frozen=True)` SystemGrid is
+        unhashable out of the box. Needed so a SystemGrid can be a cache
+        key (see link.Link.sbr_pulse_response's lru_cache) without ever
+        risking the ambiguous-truth-value error a value-based `__eq__`
+        would hit comparing `t`/`f`/`x_sinc` arrays on a hash collision.
+        """
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     @classmethod
     def build(cls, baud_rate: float, freq_step: float, samples_per_ui: int) -> SystemGrid:
@@ -54,36 +70,27 @@ class SystemGrid:
 
         x_sinc = int(ui / t[1]) * np.sinc(ui * f)
 
-        return cls(t=t, f=f, x_sinc=x_sinc, samples_per_ui=samples_per_ui)
+        # `frozen=True` only blocks reassigning `t`/`f`/`x_sinc` themselves
+        # (`grid.f = ...`), not in-place mutation of the arrays they point
+        # to (`grid.f[0] = ...` would otherwise still silently succeed) --
+        # this closes that gap so identity-based caching keyed on a
+        # SystemGrid (see link.Link.sbr_pulse_response) can't be
+        # invalidated out from under it without an error.
+        for array in (t, f, x_sinc):
+            array.setflags(write=False)
 
-    # def pulse_response(self, h: npt.NDArray[np.complex128]) -> Signal:
-    #     """(93A-24): p(t) = IFFT[x_sinc(f) * H(f)], the pulse response of
-    #     a system whose transfer function is `h` (evaluated on `self.f`),
-    #     as a Signal — not yet a PulseResponse; cursor location is a
-    #     separate step (PulseResponse.from_signal).
-    #
-    #     Args:
-    #         h: The system's transfer function (channel * CTLE * FFE *
-    #             ...), evaluated on `self.f`.
-    #
-    #     Returns:
-    #         The pulse response, as a Signal.
-    #     """
-    #     p = np.fft.irfft(self.x_sinc * h)[: len(self.t)]
-    #     fs = 1.0 / (self.t[1] - self.t[0])
-    #     return Signal(samples=p, fs=fs, t0=0.0)
+        return cls(t=t, f=f, x_sinc=x_sinc, samples_per_ui=samples_per_ui)
 
     def truncated_impulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
         """MATLAB COM3.70's own `s21_to_impulse_DC`
-        (`com_ieee8023_93a_370.m:9895-9964`), not this class's usual
-        `pulse_response()`: IFFT `h`, then truncate once the result's
-        magnitude decays below `threshold * peak` (MATLAB's own default,
-        `OP.impulse_response_truncation_threshold`) — the result is no
-        longer the periodic record `pulse_response()` assumes. Not a
-        pulse response yet — `box_car_integrate()` is the next step
-        MATLAB's own pipeline takes; kept separate here since CTLE's own
-        time-domain path (`Ctle.process()`) runs on the impulse response,
-        before that box-car integration.
+        (`com_ieee8023_93a_370.m:9895-9964`): IFFT `h`, then truncate once
+        the result's magnitude decays below `threshold * peak` (MATLAB's
+        own default, `OP.impulse_response_truncation_threshold`) — the
+        result is not a periodic record the way a plain IFFT normally
+        would be. Not a pulse response yet — `box_car_integrate()` is the
+        next step MATLAB's own pipeline takes; kept separate here since
+        CTLE's own time-domain path (`Ctle.process()`) runs on the
+        impulse response, before that box-car integration.
 
         Args:
             h: The system's transfer function, evaluated on `self.f`.
@@ -104,19 +111,10 @@ class SystemGrid:
         linear (causal, non-circular) convolution — matching MATLAB's own
         `filter(ones(1,samples_per_ui),1,...)` (`com_ieee8023_93a_370.m:930`),
         the step that turns an impulse response into a pulse response.
-        Linear, not `pulse_response()`'s circular treatment, because
-        `sig` (from `truncated_impulse_response()`, or `Ctle.process()`'s
-        output on it) is no longer a periodic record.
+        Linear, not circular, because `sig` (from
+        `truncated_impulse_response()`, or `Ctle.process()`'s output on
+        it) is not a periodic record.
         """
         box = np.ones(self.samples_per_ui)
         p = np.convolve(sig.samples, box, mode="full")[: len(sig.samples)]
         return Signal(samples=p, fs=sig.fs, t0=sig.t0)
-
-    def truncated_pulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
-        """`truncated_impulse_response()` then `box_car_integrate()` —
-        MATLAB's own two-step recipe end to end, with no CTLE/FFE in
-        between. Exists for `Link.uneq_pulse_response()`; see
-        `truncated_impulse_response()`'s own docstring for why CTLE needs
-        these as two separate steps rather than this one.
-        """
-        return self.box_car_integrate(self.truncated_impulse_response(h, threshold))
