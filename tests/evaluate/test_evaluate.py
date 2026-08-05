@@ -25,17 +25,12 @@ import pychopmarg.utility.filter
 import pychopmarg.utility.sparams
 import pytest
 import skrf
-
-pytest.skip(
-    "references the removed serdeskit.evaluate package (folded into optimize/: "
-    "ComStandard moved, evaluate_channel replaced by search()+compute()) -- needs updating",
-    allow_module_level=True,
-)
-
 from pychopmarg.com import COM
 from pychopmarg.common import OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
-from serdeskit.evaluate import ComStandard, evaluate_channel
+
+from serdeskit.com import compute
+from serdeskit.optimize import ComStandard, search
 
 
 @dataclass(frozen=True)
@@ -166,6 +161,7 @@ def _standard(setup: Setup, com_min_db: float) -> ComStandard:
         tx_taps_bounds=TX_TAPS_BOUNDS,
         tx_taps_c0_min=C0_MIN,
         tx_taps_n_post=N_POST,
+        tx_risetime=0.0,  # matches PyChOpMarg's own H(), no Tx risetime factor
         rx_afe_cutoff_freq=float(cfg.f_r) * float(cfg.fb) * 1e9,
         r0=float(cfg.R_0),
         tx_termination_resistance=float(cfg.R_d[0]),
@@ -174,15 +170,23 @@ def _standard(setup: Setup, com_min_db: float) -> ComStandard:
         tx_die_inductances=[l / 1e9 for l in cfg.L_s[0]],  # type: ignore[attr-defined]
         tx_bump_capacitance=cfg.C_b[0] / 1e9,
         tx_pad_capacitance=cfg.C_p[0] / 1e9,
+        # IEEE_8023dj's own z_c/z_p/z_pB aren't per-side -- same package
+        # transmission line on both ends here (unlike e.g. the real C2C
+        # config, see examples/compute_com_c2c.py).
+        tx_tline_a1=cfg.a1,
+        tx_tline_a2=cfg.a2,
+        tx_tline_tau=cfg.tau,
+        tx_tline_gamma0=cfg.gamma0,
+        tx_tline_segments=list(zip(cfg.z_c, [cfg.z_p[setup.com.zp_sel], cfg.z_pB])),
         rx_die_capacitances=[c / 1e9 for c in cfg.C_d[1]],  # type: ignore[attr-defined]
         rx_die_inductances=[l / 1e9 for l in cfg.L_s[1]],  # type: ignore[attr-defined]
         rx_bump_capacitance=cfg.C_b[1] / 1e9,
         rx_pad_capacitance=cfg.C_p[1] / 1e9,
-        package_tline_a1=cfg.a1,
-        package_tline_a2=cfg.a2,
-        package_tline_tau=cfg.tau,
-        package_tline_gamma0=cfg.gamma0,
-        package_tline_segments=list(zip(cfg.z_c, [cfg.z_p[setup.com.zp_sel], cfg.z_pB])),
+        rx_tline_a1=cfg.a1,
+        rx_tline_a2=cfg.a2,
+        rx_tline_tau=cfg.tau,
+        rx_tline_gamma0=cfg.gamma0,
+        rx_tline_segments=list(zip(cfg.z_c, [cfg.z_p[setup.com.zp_sel], cfg.z_pB])),
         com_min_db=com_min_db,
     )
 
@@ -214,35 +218,27 @@ def _pychopmarg_search_then_compute(com: COM) -> float:
     return float(20 * np.log10(signal_amplitude / noise_amplitude))
 
 
-@pytest.mark.skip(
-    reason=(
-        "EqualizationSearch builds Link without a tx_filter -- "
-        "ffe_channel_ctle_pulse_response() now requires one (TxRisetimeFilter, "
-        "wired in to match MATLAB's real H_t behavior), so this raises "
-        "AttributeError. Search/optimization-level MATLAB alignment is "
-        "explicitly out of scope for now (CLAUDE.md); wiring tx_filter into "
-        "EqualizationSearch is the fix, if picked up. See docs/known-issues.md."
+def _evaluate(standard: ComStandard, setup: Setup) -> float:
+    params = search(
+        standard,
+        thru_path=str(setup.thru_path),
+        next_paths=[str(p) for p in setup.next_paths],
+        fext_paths=[str(setup.fext_path)],
+        port_order=(0, 2, 1, 3),
+        show_progress=False,
     )
-)
-@pytest.mark.tx_filter_unwired_in_search
-def test_matches_pychopmargs_own_search_then_compute(setup: Setup) -> None:
-    standard = _standard(setup, com_min_db=-100.0)  # low enough that pass/fail isn't in question here
+    return compute(params).com_db
 
-    evaluation = evaluate_channel(standard, setup.thru_path, next_paths=setup.next_paths, fext_paths=[setup.fext_path])
+
+def test_matches_pychopmargs_own_search_then_compute(setup: Setup) -> None:
+    # com_min_db doesn't affect search()/compute() at all (it's a pure
+    # downstream threshold a caller compares com_db against, not
+    # evaluate_channel's own bundled "passes" flag -- that flag doesn't
+    # exist anymore now that search()/compute() are separate functions) --
+    # any value works here.
+    standard = _standard(setup, com_min_db=-100.0)
+
+    actual_com_db = _evaluate(standard, setup)
 
     expected_com_db = _pychopmarg_search_then_compute(setup.com)
-    assert evaluation.result.com_db == pytest.approx(expected_com_db, rel=1e-9)
-
-
-@pytest.mark.skip(reason="Same tx_filter-unwired-in-search gap as test_matches_pychopmargs_own_search_then_compute.")
-@pytest.mark.tx_filter_unwired_in_search
-def test_passes_reflects_the_threshold(setup: Setup) -> None:
-    passing = evaluate_channel(
-        _standard(setup, com_min_db=-100.0), setup.thru_path, next_paths=setup.next_paths, fext_paths=[setup.fext_path],
-    )
-    failing = evaluate_channel(
-        _standard(setup, com_min_db=100.0), setup.thru_path, next_paths=setup.next_paths, fext_paths=[setup.fext_path],
-    )
-
-    assert passing.passes
-    assert not failing.passes
+    assert actual_com_db == pytest.approx(expected_com_db, rel=1e-9)
