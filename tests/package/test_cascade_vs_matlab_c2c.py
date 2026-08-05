@@ -13,9 +13,8 @@ Package case 1 (13mm TX, 11mm RX -- the config's own per-side lengths,
 not the uniform-13mm approximation an earlier version of this test used).
 
 Needs the real channel file (gitignored -- see
-examples/compute_com_c2c.py's own docstring for the download link).
-Skipped if it isn't present; how CI gets access to it is a separate,
-not-yet-solved problem.
+examples/compute_com_c2c.py's own docstring for the download link;
+CI's own workflow downloads it, see .github/workflows/ci.yml).
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ import csv
 from pathlib import Path
 
 import numpy as np
-import pytest
 import skrf
 
 from serdeskit.channel import differential_network
@@ -63,7 +61,6 @@ RX_PACKAGE = Package(
 )
 
 
-@pytest.mark.skipif(not THRU_PATH.exists(), reason="requires the real (gitignored) C2C channel data")
 def test_channel_plus_package_matches_matlab() -> None:
     with open(DATA) as f:
         rows = list(csv.DictReader(f))

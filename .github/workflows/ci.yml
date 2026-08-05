@@ -18,6 +18,22 @@ jobs:
       - name: Install package with dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Cache C2C channel data
+        id: cache-c2c
+        uses: actions/cache@v4
+        with:
+          path: reference/ck_channels/c2c_pcb
+          key: c2c-pcb-gore-3ck-02-0519
+
+      - name: Download C2C channel data
+        if: steps.cache-c2c.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p reference/ck_channels/c2c_pcb
+          curl -sSfL --retry 3 --max-time 60 \
+            https://www.ieee802.org/3/ck/public/tools/c2c/gore_3ck_02_0519_PCB.zip \
+            -o /tmp/gore_3ck_02_0519_PCB.zip
+          unzip -q -o /tmp/gore_3ck_02_0519_PCB.zip -d reference/ck_channels/c2c_pcb
+
       - name: mypy
         run: mypy
 
