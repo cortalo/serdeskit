@@ -59,17 +59,28 @@ from serdeskit.optimize import ComStandard, search
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
-# Config's own g_DC=[-20:1:0] (21 candidates), coarsened to every 5 dB.
-DC_GAIN_CANDIDATES = [-20.0, -15.0, -10.0, -5.0, 0.0]
-# Config's own g_DC_HP=[-4:1:0] -- only 5 candidates already, used as-is.
-SHELF_GAIN_CANDIDATES = [-4.0, -3.0, -2.0, -1.0, 0.0]
-# Config's own c(-3)/c(-2)/c(-1)/c(1) ranges, each [min:0.02:max] ->
-# coarsened to 3 values per tap here (same min/max, bigger step).
+# Grid shrunk to a single point: MATLAB's own found-optimal case-1
+# coefficients (same numbers compute_com_c2c_matlab_coeffs.py plugs in
+# directly, no search) -- CTLE DC gain -3dB, shelf gain -2dB, TXFFE taps
+# [-0.02, 0.06, -0.2, 0.68, -0.04] (c(-3..1), cursor c(0)=0.68 derived).
+# search()'s own candidate list always prepends the all-zero (flat,
+# unequalized) combination unconditionally on top of whatever
+# TX_TAPS_BOUNDS produces (matching PyChOpMarg's own com._tx_combs[0]),
+# so this is 1 DC gain x 1 shelf gain x 2 Tx-tap candidates (all-zero +
+# this one) = 2 grid points total, not exactly 1.
+DC_GAIN_CANDIDATES = [-3.0]
+SHELF_GAIN_CANDIDATES = [-2.0]
+# step=1.0, not 0.02: with lo==hi, the step's own magnitude is
+# irrelevant to which values land in range -- but np.arange(lo, lo+step,
+# step) is float-rounding-sensitive right at its own endpoint (e.g.
+# np.arange(0.06, 0.08, 0.02) spuriously includes 0.08 too, since
+# 0.06+0.02 isn't exactly representable), and a step this much larger
+# than the values involved stays well clear of that.
 TX_TAPS_BOUNDS = [
-    (-0.04, 0.0, 0.02),  # c(-3): [-0.04:0.02:0]
-    (0.0, 0.1, 0.05),  # c(-2): [0:0.02:0.1]
-    (-0.28, 0.0, 0.14),  # c(-1): [-0.28:0.02:0]
-    (-0.1, 0.0, 0.05),  # c(1): [-0.1:0.02:0]
+    (-0.02, -0.02, 1.0),  # c(-3)
+    (0.06, 0.06, 1.0),  # c(-2)
+    (-0.2, -0.2, 1.0),  # c(-1)
+    (-0.04, -0.04, 1.0),  # c(1)
 ]
 
 STANDARD = ComStandard(
