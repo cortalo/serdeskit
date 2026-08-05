@@ -56,22 +56,22 @@ class SystemGrid:
 
         return cls(t=t, f=f, x_sinc=x_sinc, samples_per_ui=samples_per_ui)
 
-    def pulse_response(self, h: npt.NDArray[np.complex128]) -> Signal:
-        """(93A-24): p(t) = IFFT[x_sinc(f) * H(f)], the pulse response of
-        a system whose transfer function is `h` (evaluated on `self.f`),
-        as a Signal — not yet a PulseResponse; cursor location is a
-        separate step (PulseResponse.from_signal).
-
-        Args:
-            h: The system's transfer function (channel * CTLE * FFE *
-                ...), evaluated on `self.f`.
-
-        Returns:
-            The pulse response, as a Signal.
-        """
-        p = np.fft.irfft(self.x_sinc * h)[: len(self.t)]
-        fs = 1.0 / (self.t[1] - self.t[0])
-        return Signal(samples=p, fs=fs, t0=0.0)
+    # def pulse_response(self, h: npt.NDArray[np.complex128]) -> Signal:
+    #     """(93A-24): p(t) = IFFT[x_sinc(f) * H(f)], the pulse response of
+    #     a system whose transfer function is `h` (evaluated on `self.f`),
+    #     as a Signal — not yet a PulseResponse; cursor location is a
+    #     separate step (PulseResponse.from_signal).
+    #
+    #     Args:
+    #         h: The system's transfer function (channel * CTLE * FFE *
+    #             ...), evaluated on `self.f`.
+    #
+    #     Returns:
+    #         The pulse response, as a Signal.
+    #     """
+    #     p = np.fft.irfft(self.x_sinc * h)[: len(self.t)]
+    #     fs = 1.0 / (self.t[1] - self.t[0])
+    #     return Signal(samples=p, fs=fs, t0=0.0)
 
     def truncated_impulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
         """MATLAB COM3.70's own `s21_to_impulse_DC`

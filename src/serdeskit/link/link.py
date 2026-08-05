@@ -179,49 +179,49 @@ class Link:
         eq_pulse = self.ffe.process(pulse)  # type: ignore[union-attr]
         return self.rx_ffe.process(eq_pulse)  # type: ignore[union-attr]
 
-    def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
-        """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
-        ctle's, ffe's, rx_afe's, and rx_ffe's transfer functions on a
-        shared SystemGrid and inverse-transforms the result into a
-        Signal. Requires `self.ctle`/`self.ffe`/`self.tx_filter`/
-        `self.rx_afe`/`self.rx_ffe` to be set (see the class docstring
-        for what happens if not).
-
-        `tx_filter` (the Tx driver's finite risetime) is included here
-        despite this project previously assuming, per its reading of
-        (93A-19), that it "has no role in the pulse response — it only
-        shapes the transmitter noise PSD". That assumption was wrong:
-        MATLAB COM3.70's own real behavior bakes an equivalent factor
-        (`s21_pkg_tester`'s `H_t`) into the same `chdata(i).sdd21` this
-        method's `h` is meant to match, whenever `OP.FORCE_TR` is set —
-        confirmed against MATLAB, see docs/known-issues.md's "full
-        composed pulse response" entry and `tests/tx_filter/
-        test_risetime_vs_matlab.py`.
-
-        Not yet cursor-located — pass the result to
-        `PulseResponse.from_signal(...)` for that; kept as a separate
-        step here rather than folded in, so this package doesn't need to
-        depend on `serdeskit.pulse_response`.
-
-        Args:
-            grid: The time/frequency axes to compute on. Taken rather
-                than derived here so a caller needing the same axes for
-                something else — the (93A-35) noise integral, say — uses
-                one grid instead of deriving a second that has to agree.
-
-        Returns:
-            The link's pulse response, as a Signal.
-        """
-        h = (
-            self.channel.transfer_function(grid.f)
-            * self.tx_filter.transfer_function(grid.f)  # type: ignore[union-attr]
-            * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
-            * self.ffe.transfer_function(grid.f)  # type: ignore[union-attr]
-            * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
-            * self.rx_ffe.transfer_function(grid.f)  # type: ignore[union-attr]
-        )
-
-        return grid.pulse_response(h)
+    # def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
+    #     """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
+    #     ctle's, ffe's, rx_afe's, and rx_ffe's transfer functions on a
+    #     shared SystemGrid and inverse-transforms the result into a
+    #     Signal. Requires `self.ctle`/`self.ffe`/`self.tx_filter`/
+    #     `self.rx_afe`/`self.rx_ffe` to be set (see the class docstring
+    #     for what happens if not).
+    #
+    #     `tx_filter` (the Tx driver's finite risetime) is included here
+    #     despite this project previously assuming, per its reading of
+    #     (93A-19), that it "has no role in the pulse response — it only
+    #     shapes the transmitter noise PSD". That assumption was wrong:
+    #     MATLAB COM3.70's own real behavior bakes an equivalent factor
+    #     (`s21_pkg_tester`'s `H_t`) into the same `chdata(i).sdd21` this
+    #     method's `h` is meant to match, whenever `OP.FORCE_TR` is set —
+    #     confirmed against MATLAB, see docs/known-issues.md's "full
+    #     composed pulse response" entry and `tests/tx_filter/
+    #     test_risetime_vs_matlab.py`.
+    #
+    #     Not yet cursor-located — pass the result to
+    #     `PulseResponse.from_signal(...)` for that; kept as a separate
+    #     step here rather than folded in, so this package doesn't need to
+    #     depend on `serdeskit.pulse_response`.
+    #
+    #     Args:
+    #         grid: The time/frequency axes to compute on. Taken rather
+    #             than derived here so a caller needing the same axes for
+    #             something else — the (93A-35) noise integral, say — uses
+    #             one grid instead of deriving a second that has to agree.
+    #
+    #     Returns:
+    #         The link's pulse response, as a Signal.
+    #     """
+    #     h = (
+    #         self.channel.transfer_function(grid.f)
+    #         * self.tx_filter.transfer_function(grid.f)  # type: ignore[union-attr]
+    #         * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
+    #         * self.ffe.transfer_function(grid.f)  # type: ignore[union-attr]
+    #         * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+    #         * self.rx_ffe.transfer_function(grid.f)  # type: ignore[union-attr]
+    #     )
+    #
+    #     return grid.pulse_response(h)
 
 
 def _upsample_bits(bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> npt.NDArray[np.float64]:
