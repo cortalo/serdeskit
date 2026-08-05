@@ -1,15 +1,19 @@
-"""ComParams: the configuration a COM calculation needs that isn't already
-carried by the Link's own stages.
+"""LinkComParams: every raw value a COM calculation needs, flat enough to
+come straight off a config sheet — numbers, strings (Touchstone file
+paths), and sequences of either. `compute()` is what turns this into the
+actual Channel/Ctle/Ffe/... objects; this dataclass deliberately holds no
+domain objects itself; see `compute()`'s own docstring for which concrete
+class each group of fields feeds.
 
-Deliberately does *not* restate anything a stage already owns — the CTLE's
-pole/zero/gain settings live on TwoStageCtle, the Tx tap weights on
-TapWeightFfe, the Rx AFE's cutoff on RxAfeButterworth, the termination
-reflection coefficients on SParameterChannel. Only what has no such home
-appears here, which is why this is ~11 fields rather than the ~40 of
-PyChOpMarg's flat COMParams.
+No field has a default: every value here is something a real config sheet
+actually specifies, so a caller building one is forced to make each
+choice explicitly rather than silently inheriting a value that happens to
+be wrong for their config (e.g. `rx_ffe_n_pre=0`, or an empty tap-weight
+array meaning "unequalized").
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -17,7 +21,60 @@ import numpy.typing as npt
 
 
 @dataclass(frozen=True)
-class ComParams:
+class LinkComParams:
+    # Victim + crosstalk aggressor channels: Touchstone file paths.
+    channel_path: str
+    next_channel_paths: Sequence[str]
+    fext_channel_paths: Sequence[str]
+    port_order: Sequence[int]  # see channel.differential_network
+    gamma1: float  # near-end reflection coefficient — see SParameterChannel
+    gamma2: float  # far-end reflection coefficient
+
+    # Tx/Rx package (Package's own fields, tx_/rx_ prefixed) — see
+    # package.Package for what each one means physically.
+    tx_r0: float
+    tx_die_capacitances: Sequence[float]
+    tx_die_inductances: Sequence[float]
+    tx_bump_capacitance: float
+    tx_tline_a1: float
+    tx_tline_a2: float
+    tx_tline_tau: float
+    tx_tline_gamma0: float
+    tx_tline_segments: Sequence[tuple[float, float]]
+    tx_pad_capacitance: float
+
+    rx_r0: float
+    rx_die_capacitances: Sequence[float]
+    rx_die_inductances: Sequence[float]
+    rx_bump_capacitance: float
+    rx_tline_a1: float
+    rx_tline_a2: float
+    rx_tline_tau: float
+    rx_tline_gamma0: float
+    rx_tline_segments: Sequence[tuple[float, float]]
+    rx_pad_capacitance: float
+
+    # CTLE (TwoStageCtle's own fields) — see ctle.TwoStageCtle.
+    ctle_zero_freq: float
+    ctle_pole1_freq: float
+    ctle_pole2_freq: float
+    ctle_shelf_freq: float
+    ctle_dc_gain_db: float
+    ctle_shelf_gain_db: float
+
+    # Tx FFE (TapWeightFfe's own fields, minus tap_delay -- derived from
+    # baud_rate) — see ffe.TapWeightFfe.
+    ffe_tap_weights: npt.NDArray[np.float64]
+    ffe_n_post: int
+
+    tx_risetime: float  # TxRisetimeFilter's own field
+    rx_afe_cutoff_freq: float  # RxAfeButterworth's own field
+
+    # Rx FFE (TapWeightRxFfe's own fields, minus tap_delay) — see
+    # rx_ffe.TapWeightRxFfe.
+    rx_ffe_tap_weights: npt.NDArray[np.float64]
+    rx_ffe_n_pre: int
+
     baud_rate: float  # fb (Hz)
     freq_step: float  # fstep (Hz) — frequency resolution; see SystemGrid.build
     samples_per_ui: int  # M

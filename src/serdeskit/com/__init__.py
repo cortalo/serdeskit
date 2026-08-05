@@ -1,4 +1,4 @@
-from serdeskit.com.com import Com, ComResult
-from serdeskit.com.params import ComParams
+from serdeskit.com.com import ComResult, compute
+from serdeskit.com.params import LinkComParams
 
-__all__ = ["Com", "ComParams", "ComResult"]
+__all__ = ["ComResult", "LinkComParams", "compute"]
