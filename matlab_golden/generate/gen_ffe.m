@@ -33,3 +33,16 @@ for i = 1:N
 end
 fclose(fid);
 disp('wrote ffe_fft.csv');
+
+% Same FFE(C, cmx, spui, delta) call's own time-domain output V0, not
+% just its FFT -- ground truth for tests/ffe/test_tap_weight_process_vs_matlab.py
+% (TapWeightFfe.process(), the time-domain circshift-sum path, as
+% opposed to transfer_function() which test_tap_weight_vs_matlab.py
+% above already checks).
+fid = fopen(fullfile(out_dir, 'ffe_time_domain.csv'), 'w');
+fprintf(fid, 'sample,response\n');
+for i = 1:N
+    fprintf(fid, '%d,%.10g\n', i-1, V0(i));
+end
+fclose(fid);
+disp('wrote ffe_time_domain.csv');

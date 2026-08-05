@@ -67,7 +67,20 @@ class TapWeightFfe:
         )
 
     def process(self, sig: Signal) -> Signal:
-        """Apply this FFE to `sig` via its frequency-domain transfer
-        function.
+        """Time-domain path: a circular-shift-and-sum tap-delay line —
+        matching MATLAB COM3.70's own `FFE` (`matlab_golden/lib/FFE.m`)
+        directly, rather than this class's own `transfer_function()`
+        multiplied into a shared frequency-domain composition. Verified
+        against MATLAB's own `FFE` output directly:
+        `tests/ffe/test_tap_weight_process_vs_matlab.py`.
         """
-        raise NotImplementedError
+        n_pre = len(self.tap_weights) - self.n_post
+        taps = np.concatenate(
+            [self.tap_weights[:n_pre], [self.cursor_weight], self.tap_weights[n_pre:]]
+        )
+        samples_per_ui = round(self.tap_delay * sig.fs)
+
+        out = np.zeros_like(sig.samples)
+        for i, c in enumerate(taps):
+            out += np.roll(sig.samples, (i - n_pre) * samples_per_ui) * c
+        return Signal(samples=out, fs=sig.fs, t0=sig.t0)
