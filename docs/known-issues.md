@@ -414,3 +414,47 @@ above are superseded by this — composition method was the whole story.
 `ffe_channel_ctle_pulse_response()` — the latter stays as-is (still
 useful, still frequency-domain, still has its own known residual) rather
 than being rewritten in place.
+
+**Update: `sbr_pulse_response()` itself was matching the wrong MATLAB
+quantity — found and fixed.** `fom_result.sbr` (what the match above was
+against) is built inside MATLAB's search loop (`optimize_fom`) purely for
+scoring candidates, and never applies Rx FFE. The value that actually
+feeds `get_pdf()` (the real COM/ISI/noise calculation) is `chdata(i).
+eq_pulse_response`, built by a separate function, `Apply_EQ`
+(`com_ieee8023_93a_370.m:680-735`, called at `:426`, own comment:
+"returns pulse response with CTLE, TXLE, RXFFE") — which does apply Rx
+FFE, via `force()` (`:3693-3850`). For this project's real C2C config,
+Rx FFE is a single unity tap, so `sbr` and the real `eq_pulse_response`
+coincide numerically — which is exactly why the match above didn't catch
+this.
+
+Confirmed as a real, quantified gap first (`tests/link/
+test_sbr_pulse_response_missing_rx_ffe.py`, TDD: written red against
+`sbr_pulse_response()`'s recipe with no Rx FFE step, using a synthetic
+channel + a genuinely multi-tap Rx FFE — unlike this project's own C2C
+config — and MATLAB's own `Apply_EQ`, extracted verbatim). `force()`
+isn't just a filter application: it also runs an adaptive "DNH" search
+that can zero trailing post-cursor taps (`param.ffe_backoff`, default
+4) — out of scope the same way `EqualizationSearch` is, so the fixture
+uses zero post-cursor Rx FFE taps, which provably makes that search a
+no-op (confirmed directly, not assumed).
+
+Fixed: `TapWeightRxFfe` gained an `n_pre` constructor field (cursor-
+referenced, matching `TapWeightFfe`'s own convention — default 0
+preserves prior behavior, irrelevant for the single-tap case every
+config here has used) and a real `process()` (circular-shift-sum, same
+structure as `TapWeightFfe.process()`, verified against MATLAB's
+`force()` directly: `tests/rx_ffe/
+test_rx_ffe_tap_weight_process_vs_matlab.py`). `RxFfe`'s Protocol
+widened to require `process()` (every existing `rx_ffe=` call site
+already satisfied it — confirmed by a clean `mypy --strict` run, not
+inspected file by file). `sbr_pulse_response()` now calls `self.rx_ffe.
+process(...)` as its final step; the golden test above still passes with
+`TapWeightRxFfe(tap_weights=[1.0], ...)` (this config's own real, trivial
+Rx FFE) added explicitly.
+
+`transfer_function()` on `TapWeightRxFfe` is untouched — still only
+verified against PyChOpMarg's own `Hffe_Rx` (first-tap-referenced), not
+MATLAB. If `ffe_channel_ctle_pulse_response()` is ever revisited, that's
+a separate, still-open question (see the `TapWeightRxFfe` entry above,
+which is otherwise unaffected by this fix).

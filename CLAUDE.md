@@ -127,9 +127,11 @@ writeups.
   fixed, then a ~1-2% residual, also fixed: MATLAB composes CTLE/FFE in
   the time domain, not frequency-domain multiplication like this
   project's `ffe_channel_ctle_pulse_response()`. `Ctle.process()`/
-  `Ffe.process()` are now real (TDD-verified against `TD_CTLE`/`FFE.m`),
-  and `Link.sbr_pulse_response()` chains them the way MATLAB really does
-  — matches MATLAB's `best_sbr` to floating-point precision.
+  `Ffe.process()`/`RxFfe.process()` are now real (TDD-verified against
+  `TD_CTLE`/`FFE.m`/`force()`), and `Link.sbr_pulse_response()` chains
+  them the way MATLAB really does — matches MATLAB's real `eq_pulse_
+  response` (not `fom_result.sbr`, which never applies Rx FFE — a
+  separate gap found and fixed the same way) to floating-point precision.
   `ffe_channel_ctle_pulse_response()` itself is untouched and still has
   the residual; `sbr_pulse_response()` is the new, separate method to
   use instead. Full detail in `docs/known-issues.md`.

@@ -70,11 +70,14 @@ class RxAfe(Protocol):
 
 
 class RxFfe(Protocol):
-    """What Link needs from an Rx FFE — same shape as RxAfe, but its own
-    Protocol rather than reusing it: RxAfe is a fixed, always-present
-    stage, while an Rx FFE may genuinely be absent (see Link.rx_ffe).
+    """What Link needs from an Rx FFE. `process()` is consumed by
+    `sbr_pulse_response()` (MATLAB's own real Rx FFE application,
+    `force()`, confirmed by reading `Apply_EQ`'s call site — see that
+    method's own docstring); `transfer_function()` by `ffe_channel_ctle_
+    pulse_response()`'s frequency-domain composition instead.
     """
 
+    def process(self, sig: Signal) -> Signal: ...
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 
@@ -151,22 +154,19 @@ class Link:
 
     def sbr_pulse_response(self, grid: SystemGrid) -> Signal:
         """MATLAB COM3.70's real computation, end to end — named after its
-        own `sbr` (`com_ieee8023_93a_370.m:6077`/`:7132`) — not this
-        class's own frequency-domain `ffe_channel_ctle_pulse_response()`.
-        Continues where `uneq_pulse_response()` leaves off, but as two
-        separate steps rather than one call, since CTLE's own time-domain
-        path (`Ctle.process()`) needs the impulse response, before
-        `box_car_integrate()` turns it into a pulse response: `channel +
-        tx_filter + rx_afe` (truncated impulse response) -> `ctle.process()`
-        (time-domain IIR, twice, per MATLAB's own CL120d two-stage
-        structure) -> box-car integration -> `ffe.process()` (time-domain
-        circular-shift-sum). Requires `self.ctle`/`self.ffe`/`self.
-        tx_filter`/`self.rx_afe` to be set.
-
-        No `rx_ffe` here: MATLAB's own `sbr` construction has no separate
-        Rx FFE step for this project's real config (a single unity tap),
-        so there's nothing to verify against yet — see docs/
-        known-issues.md's `TapWeightRxFfe` entry.
+        own `sbr`/`eq_pulse_response` (`Apply_EQ`, `com_ieee8023_93a_370.m:
+        680-735`, "returns pulse response with CTLE, TXLE, RXFFE") — not
+        this class's own frequency-domain `ffe_channel_ctle_pulse_
+        response()`. Continues where `uneq_pulse_response()` leaves off,
+        but as two separate steps rather than one call, since CTLE's own
+        time-domain path (`Ctle.process()`) needs the impulse response,
+        before `box_car_integrate()` turns it into a pulse response:
+        `channel + tx_filter + rx_afe` (truncated impulse response) ->
+        `ctle.process()` (time-domain IIR, twice, per MATLAB's own CL120d
+        two-stage structure) -> box-car integration -> `ffe.process()`
+        (Tx, time-domain circular-shift-sum) -> `rx_ffe.process()` (same
+        shape, Rx-side taps). Requires `self.ctle`/`self.ffe`/`self.
+        tx_filter`/`self.rx_afe`/`self.rx_ffe` to be set.
         """
         h = (
             self.channel.transfer_function(grid.f)
@@ -176,7 +176,8 @@ class Link:
         impulse = grid.truncated_impulse_response(h)
         ctle_impulse = self.ctle.process(impulse)  # type: ignore[union-attr]
         pulse = grid.box_car_integrate(ctle_impulse)
-        return self.ffe.process(pulse)  # type: ignore[union-attr]
+        eq_pulse = self.ffe.process(pulse)  # type: ignore[union-attr]
+        return self.rx_ffe.process(eq_pulse)  # type: ignore[union-attr]
 
     def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
         """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
