@@ -73,23 +73,32 @@ class ComStandard:
     tx_termination_resistance: float  # R_d[0]
     rx_termination_resistance: float  # R_d[1]
 
-    # Package model — die (per side) + package transmission line (shared
-    # between sides; see package.Package's own docstring for why: it's
-    # the same physical package trace type on either end, only the die
-    # parasitics genuinely differ Tx vs Rx).
+    # Package model — die and package transmission line, both per side.
+    # z_p (package trace length, in `*_tline_segments`) genuinely
+    # differs Tx vs Rx even under "package case 1" naming (e.g. IEEE
+    # 802.3ck C2C: z_p(TX)=13mm, z_p(RX)=11mm) -- kept fully split
+    # rather than one shared package_tline_* pair (this class's own
+    # earlier design), which silently re-collapsed Tx/Rx to the same
+    # length and cost ~2.7dB of COM accuracy versus MATLAB before this
+    # was caught (see examples/compute_com_c2c.py's git history).
     tx_die_capacitances: Sequence[float]  # C_d[0] (F), one per on-die ladder rung
     tx_die_inductances: Sequence[float]  # L_s[0] (H)
     tx_bump_capacitance: float  # C_b[0] (F)
     tx_pad_capacitance: float  # C_p[0] (F)
+    tx_tline_a1: float
+    tx_tline_a2: float
+    tx_tline_tau: float
+    tx_tline_gamma0: float
+    tx_tline_segments: Sequence[tuple[float, float]]  # (characteristic impedance Ohms, length mm) pairs
     rx_die_capacitances: Sequence[float]  # C_d[1]
     rx_die_inductances: Sequence[float]  # L_s[1]
     rx_bump_capacitance: float  # C_b[1]
     rx_pad_capacitance: float  # C_p[1]
-    package_tline_a1: float
-    package_tline_a2: float
-    package_tline_tau: float
-    package_tline_gamma0: float
-    package_tline_segments: Sequence[tuple[float, float]]  # (characteristic impedance Ohms, length mm) pairs
+    rx_tline_a1: float
+    rx_tline_a2: float
+    rx_tline_tau: float
+    rx_tline_gamma0: float
+    rx_tline_segments: Sequence[tuple[float, float]]
 
     com_min_db: float
 

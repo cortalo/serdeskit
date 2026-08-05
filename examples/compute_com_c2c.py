@@ -115,22 +115,29 @@ STANDARD = ComStandard(
     r0=50.0,
     tx_termination_resistance=50.0,  # R_d = [50, 50] in this config too -- matched, gamma1=gamma2=0
     rx_termination_resistance=50.0,
-    # package_Z_c = [87.5 87.5; 92.5 92.5] Ohm, z_p (package case 1)
-    # = 13/1.8 mm for TX (see module docstring re: NEXT/RX's own,
-    # different case-1 length this script doesn't separately model).
+    # package_Z_c = [87.5 87.5; 92.5 92.5] Ohm, z_p (package case 1) =
+    # 13/1.8mm for TX, 11/1.8mm for RX (case 1's real z_p(RX) -- unlike
+    # the KR config, where case 1 happened to be uniform, C2C's NEXT/RX
+    # case-1 length genuinely differs from TX/FEXT's; see module
+    # docstring re: NEXT/FEXT aggressors still not separately modeled).
     tx_die_capacitances=[1.2e-4 * 1e-9],  # C_d = 1.2e-4 nF
     tx_die_inductances=[0.12e-9],  # L_s = 0.12 nH
     tx_bump_capacitance=0.3e-4 * 1e-9,  # C_b = 0.3e-4 nF
     tx_pad_capacitance=0.87e-4 * 1e-9,  # C_p = 0.87e-4 nF
+    tx_tline_a1=0.0009909,
+    tx_tline_a2=0.0002772,
+    tx_tline_tau=0.006141,
+    tx_tline_gamma0=0.0,
+    tx_tline_segments=[(87.5, 13.0), (92.5, 1.8)],
     rx_die_capacitances=[1.2e-4 * 1e-9],
     rx_die_inductances=[0.12e-9],
     rx_bump_capacitance=0.3e-4 * 1e-9,
     rx_pad_capacitance=0.87e-4 * 1e-9,
-    package_tline_a1=0.0009909,
-    package_tline_a2=0.0002772,
-    package_tline_tau=0.006141,
-    package_tline_gamma0=0.0,
-    package_tline_segments=[(87.5, 13.0), (92.5, 1.8)],
+    rx_tline_a1=0.0009909,
+    rx_tline_a2=0.0002772,
+    rx_tline_tau=0.006141,
+    rx_tline_gamma0=0.0,
+    rx_tline_segments=[(87.5, 11.0), (92.5, 1.8)],  # 11mm, package case 1's real z_p(RX)
     com_min_db=3.0,  # "COM Pass threshold" in the config sheet
 )
 
