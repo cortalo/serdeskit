@@ -188,6 +188,107 @@ class Com:
             noise_pmf=p_total,
         )
 
+    def compute_sbr(self) -> ComResult:
+        """Same calculation as `compute()`, but building the pulse
+        response via `Link.sbr_pulse_response()` (MATLAB's own real
+        time-domain chain: truncate, `Ctle.process()`, box-car,
+        `Ffe.process()`, `RxFfe.process()`) instead of `Link.
+        ffe_channel_ctle_pulse_response()` (frequency-domain composition,
+        one IFFT) — the latter has a known, unexplained ~1-2% residual
+        against MATLAB; `sbr_pulse_response()` matches MATLAB's real
+        `eq_pulse_response` to floating-point precision (see
+        docs/known-issues.md's "full composed pulse response" entry).
+
+        A new, separate method rather than a change to `compute()`
+        itself: `compute()` is exercised by tests comparing against
+        PyChOpMarg (a different reference, whose own methodology doesn't
+        do this truncate-then-time-domain-chain composition at all), not
+        just this project's own MATLAB-alignment tests — switching it in
+        place would conflate the two.
+
+        Everything past pulse-response construction (the noise integral,
+        PMF construction, `noise_margin`) is unchanged: those formulas
+        are frequency-domain regardless of which pulse response feeds
+        the cursor/residual-ISI/local-slope calculations upstream of them.
+
+        Returns:
+            The COM value in dB, with the intermediate quantities that
+            produced it.
+        """
+        p = self.params
+        grid = SystemGrid.build(p.baud_rate, p.freq_step, p.samples_per_ui)
+
+        signal = self.link.sbr_pulse_response(grid).scale(p.victim_amplitude)
+        pulse_response = PulseResponse.from_signal(
+            signal,
+            ui=1.0 / p.baud_rate,
+            dfe1_max=float(p.dfe_max[0]),
+            dfe1_min=float(p.dfe_min[0]),
+        )
+        signal_amplitude = pulse_response.signal_amplitude(p.rlm, p.levels)
+        y = voltage_grid(signal_amplitude)
+
+        slopes = pulse_response.local_slopes(signal_amplitude)
+        p_jitter = delta_pmf(
+            filter_samples(p.a_dd * slopes, 1.1 * signal_amplitude), p.levels, y
+        )
+
+        rx_response = (
+            self.link.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.link.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.link.rx_ffe.transfer_function(grid.f)  # type: ignore[union-attr]
+        )
+        var_tx, var_jitter, var_noise = _gaussian_variances(
+            pulse_response.cursor_value, slopes, rx_response, p
+        )
+        var_gaussian = var_tx + var_jitter + var_noise  # (93A-41)
+        p_gaussian = gaussian_pmf(var_gaussian, y)
+
+        residual = pulse_response.residual_isi(p.dfe_min, p.dfe_max)  # (93A-26)/(93A-27)
+        p_isi = delta_pmf(filter_samples(residual, 1.1 * signal_amplitude), p.levels, y)
+        var_isi = p.level_variance * float((residual**2).sum())  # (93A-31), applied to residual ISI
+
+        aggressors = [(link, p.a_ne) for link in self._next_links()] + [
+            (link, p.a_fe) for link in self._fext_links()
+        ]
+        p_aggressors = [
+            delta_pmf(
+                filter_samples(
+                    worst_case_phase_samples(
+                        link.sbr_pulse_response(grid).scale(amplitude).samples,
+                        p.samples_per_ui,
+                    ),
+                    1.1 * signal_amplitude,
+                ),
+                p.levels,
+                y,
+            )
+            for link, amplitude in aggressors
+        ]
+
+        p_total = combine_pmfs(p_gaussian, p_jitter, p_isi)  # (93A-42)/(93A-43)
+        var_crosstalk = 0.0
+        if p_aggressors:
+            p_crosstalk = combine_pmfs(*p_aggressors)  # (93A-44): pXT
+            var_crosstalk = float((y**2 * p_crosstalk).sum())
+            p_total = combine_pmfs(p_total, p_crosstalk)  # (93A-45)
+
+        noise_amplitude = noise_margin(p_total, y, p.der_0)
+
+        return ComResult(
+            com_db=float(20 * np.log10(signal_amplitude / noise_amplitude)),
+            signal_amplitude=signal_amplitude,
+            noise_amplitude=noise_amplitude,
+            sigma_tx=float(np.sqrt(var_tx)),
+            sigma_jitter=float(np.sqrt(var_jitter)),
+            sigma_noise=float(np.sqrt(var_noise)),
+            sigma_gaussian=float(np.sqrt(var_gaussian)),
+            sigma_isi=float(np.sqrt(var_isi)),
+            sigma_crosstalk=float(np.sqrt(var_crosstalk)),
+            voltage_grid=y,
+            noise_pmf=p_total,
+        )
+
     def _next_links(self) -> list[Link]:
         flat_ffe = _flat_ffe(1.0 / self.params.baud_rate)
         return [

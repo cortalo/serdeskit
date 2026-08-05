@@ -10,16 +10,35 @@ docs/known-issues.md; C2C's config has floating taps off, so that bug
 doesn't apply here). This script isolates one candidate explanation:
 does serdeskit's own search simply fail to find as good a point as
 MATLAB's exact one, on the *same* coarsened grid compute_com_c2c.py
-uses? Plugging MATLAB's coefficients straight into Com.compute() (no
-search at all) answers that directly -- if COM jumps back up near
-5.299 dB here, the gap was the search's grid coarseness; if it doesn't,
-something else (package-length approximation, formula differences)
-explains most of it instead.
+uses? Plugging MATLAB's coefficients straight in (no search at all)
+answers that directly.
 
-MATLAB's case-1 result (package case 1, 13mm -- see
-compute_com_c2c.py's own docstring re: this script keeping the same
-package simplification, uniform TX/RX length for every channel, so any
-remaining gap here isn't a new confound):
+Two fixes landed here, each closing part of the gap:
+
+1. `Com.compute_sbr()` instead of `Com.compute()`: builds the pulse
+   response via `Link.sbr_pulse_response()` (MATLAB's own real
+   time-domain chain), not `ffe_channel_ctle_pulse_response()`
+   (frequency-domain composition, ~1-2% residual against MATLAB -- see
+   docs/known-issues.md's "full composed pulse response" entry). On its
+   own this barely moved COM (that residual was always too small to
+   explain a multi-dB gap) -- but it's the actually-correct pulse
+   response, verified independently.
+2. RX_PACKAGE's own length: was 13mm (a uniform-package simplification),
+   should be 11mm -- this config's own real z_p(RX) for package case 1
+   (see compute_com_c2c.py's own docstring: z_p(TX)=13, z_p(NEXT)=11,
+   z_p(FEXT)=13, z_p(RX)=11mm). This was the dominant error: fixing it
+   alone moves COM from 2.821 dB to 5.565 dB.
+
+Current result, both fixes applied: COM=5.565 dB (search-free numbers
+below are updated to match) vs. MATLAB's 5.299 dB -- ~0.27 dB
+remains, plausibly from the same NEXT/FEXT package-length simplification
+compute_com_c2c.py's own docstring already documents as accepted
+(evaluate_channel/this script apply one TX_PACKAGE/RX_PACKAGE pair to
+every channel uniformly, victim and aggressors alike, rather than
+per-aggressor-type lengths) -- not yet confirmed, next thing to check if
+picked up.
+
+MATLAB's case-1 result (package case 1, 13mm TX / 11mm RX):
   CTLE DC gain:     -3 dB
   CTLE shelf gain:  -2 dB
   TXLE_taps:        [-0.02, 0.06, -0.2, 0.68, -0.04]  (c(-3..1), cursor c(0)=0.68)
@@ -58,9 +77,11 @@ SAMPLES_PER_UI = 32
 R0 = 50.0  # R_d = [50, 50] in this config too -- matched termination, gamma1 = gamma2 = 0
 
 # package_Z_c = [87.5 87.5; 92.5 92.5] Ohm, z_p (package case 1) = 13/1.8 mm
-# for TX -- same uniform-package simplification compute_com_c2c.py uses
-# (see its own docstring re: NEXT/RX's differing case-1 length, 11mm,
-# not separately modeled here either).
+# for TX. One TX_PACKAGE/RX_PACKAGE pair applied to every channel
+# uniformly (victim and aggressors alike) -- same simplification
+# compute_com_c2c.py's own docstring documents (real z_p(NEXT)=11mm,
+# z_p(FEXT)=13mm differ from this uniform TX/FEXT=13mm treatment; not
+# separately modeled here either).
 TX_PACKAGE = Package(
     r0=R0,
     die_capacitances=[1.2e-4 * 1e-9],  # C_d = 1.2e-4 nF
@@ -83,7 +104,7 @@ RX_PACKAGE = Package(
     tline_a2=0.0002772,
     tline_tau=0.006141,
     tline_gamma0=0.0,
-    tline_segments=[(87.5, 13.0), (92.5, 1.8)],
+    tline_segments=[(87.5, 11.0), (92.5, 1.8)],  # 11mm, package case 1's real z_p(RX) -- see module docstring
     pad_capacitance=0.87e-4 * 1e-9,
     is_rx=True,
 )
@@ -152,7 +173,7 @@ def main() -> None:
         dfe_max=np.array([0.65, 0.15, 0.1, 0.1, 0.1, 0.1]),
     )
 
-    result = Com(link=link, params=params, next_channels=next_channels, fext_channels=fext_channels).compute()
+    result = Com(link=link, params=params, next_channels=next_channels, fext_channels=fext_channels).compute_sbr()
 
     print("Using MATLAB's own found-optimal coefficients directly (no search):")
     print("  CTLE DC gain:      -3.0 dB")
