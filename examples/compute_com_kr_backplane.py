@@ -4,30 +4,27 @@ measured backplane channel — the same pairing this project's own MATLAB
 COM3.70 run used (see reference/matlab/COM3.70/): KR_eval got COM=3.608
 dB, PASS, for this exact channel/config.
 
-Unlike an earlier version of this script, this calls serdeskit's own
-top-level entry point, evaluate.evaluate_channel, directly -- it already
-runs the equalization search then the PMF-based compute, the same
-search-then-compute flow tests/evaluate/test_evaluate.py exercises. This
-script's own job is only to build the ComStandard the KR config
+Calls serdeskit's own top-level entry points, optimize.search() then
+com.compute(), directly -- search() already runs the equalization search
+and returns a LinkComParams, compute() runs the PMF-based calc on it, the
+same search-then-compute flow tests/optimize/test_search.py exercises.
+This script's own job is only to build the ComStandard the KR config
 describes and point it at real Touchstone files, not to reimplement
-evaluate_channel's own body.
+search()/compute()'s own bodies.
 
 The real KR search space is far too large to run as-is, though: g_DC
 alone is 21 candidates ([-20:1:0] dB), g_DC_HP another 7, and the Tx
 tap grid (c(-3)/c(-2)/c(-1)/c(1), each its own [min:step:max] range)
 multiplies out to ~31k combinations -- ~650k grid points total. Every
 point costs a package-cascaded channel-transfer-function interpolation
-per victim/FEXT channel (test_evaluate.py's own docstring covers why
-that's the expensive part). DC_GAIN_CANDIDATES/SHELF_GAIN_CANDIDATES/
+per victim/FEXT channel. DC_GAIN_CANDIDATES/SHELF_GAIN_CANDIDATES/
 TX_TAPS_BOUNDS below use much coarser steps over the *same* min/max
-ranges the config specifies, the same kind of grid-shrink
-test_evaluate.py's own fixture applies to a synthetic channel, here
-applied to a real one instead.
+ranges the config specifies, applied to a real channel.
 
 Don't expect this script's own COM to land near MATLAB's 3.608 dB: this
 config's own "Floating Tap Control" section (N_bg=3 groups x N_bf=3
 taps, spanning up to N_f=40 UI beyond the 12 fixed DFE taps below)
-models a sparse long-reach DFE serdeskit doesn't implement -- com.Com
+models a sparse long-reach DFE serdeskit doesn't implement -- com.compute()
 only ever cancels the N taps dfe_min/dfe_max's length gives it
 ((93A-26)/(93A-27), pulse_response.residual_isi). Less cancellation
 capability than the real KR receiver model means more residual ISI
@@ -53,12 +50,12 @@ Run: python examples/compute_com_kr_backplane.py
 """
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import numpy as np
 
-from serdeskit.evaluate import ComStandard, evaluate_channel
+from serdeskit.com import compute
+from serdeskit.optimize import ComStandard, search
 
 DATA = Path("../reference/ck_channels/tradBP_15dB")
 
@@ -102,6 +99,13 @@ STANDARD = ComStandard(
     tx_taps_bounds=TX_TAPS_BOUNDS,
     tx_taps_c0_min=0.54,
     tx_taps_n_post=1,  # only c(1) is post-cursor
+    # This config's own real T_r hasn't been read out of the config
+    # sheet (unlike C2C's, see compute_com_c2c.py) -- 0.0 (identity)
+    # keeps this script's prior, pre-tx_filter behavior rather than
+    # guessing a value. Doesn't matter for this script's own point:
+    # its docstring already documents a much larger, expected gap from
+    # the unimplemented floating-tap DFE extension.
+    tx_risetime=0.0,
     rx_afe_cutoff_freq=0.75 * 53.125e9,
     r0=50.0,
     tx_termination_resistance=50.0,  # R_d = [50, 50] in this config too -- matched, gamma1=gamma2=0
@@ -114,46 +118,39 @@ STANDARD = ComStandard(
     tx_die_inductances=[0.12e-9],  # L_s = 0.12 nH
     tx_bump_capacitance=0.3e-4 * 1e-9,  # C_b = 0.3e-4 nF
     tx_pad_capacitance=0.87e-4 * 1e-9,  # C_p = 0.87e-4 nF
+    tx_tline_a1=0.0009909,
+    tx_tline_a2=0.0002772,
+    tx_tline_tau=0.006141,
+    tx_tline_gamma0=0.0,
+    tx_tline_segments=[(87.5, 12.0), (92.5, 1.8)],
     rx_die_capacitances=[1.2e-4 * 1e-9],
     rx_die_inductances=[0.12e-9],
     rx_bump_capacitance=0.3e-4 * 1e-9,
     rx_pad_capacitance=0.87e-4 * 1e-9,
-    package_tline_a1=0.0009909,
-    package_tline_a2=0.0002772,
-    package_tline_tau=0.006141,
-    package_tline_gamma0=0.0,
-    package_tline_segments=[(87.5, 12.0), (92.5, 1.8)],
+    rx_tline_a1=0.0009909,
+    rx_tline_a2=0.0002772,
+    rx_tline_tau=0.006141,
+    rx_tline_gamma0=0.0,
+    rx_tline_segments=[(87.5, 12.0), (92.5, 1.8)],
     com_min_db=3.0,  # "COM Pass threshold" in the config sheet
 )
 
 
 def main() -> None:
-    start = time.monotonic()
-
-    def _progress(done: int, total: int) -> None:
-        elapsed = time.monotonic() - start
-        per_candidate = elapsed / done
-        remaining = per_candidate * (total - done)
-        print(
-            f"  search: {done}/{total}  ({elapsed:.0f}s elapsed, ~{remaining:.0f}s left)",
-            end="\r" if done < total else "\n",
-            flush=True,
-        )
-
-    evaluation = evaluate_channel(
+    params = search(
         STANDARD,
-        thru_path=DATA / "Std_BP_12inch_Meg7_Thru_B56.s4p",
+        thru_path=str(DATA / "Std_BP_12inch_Meg7_Thru_B56.s4p"),
         next_paths=[
-            DATA / "Std_BP_12inch_Meg7_NEXT_A23.s4p",
-            DATA / "Std_BP_12inch_Meg7_NEXT_A56.s4p",
-            DATA / "Std_BP_12inch_Meg7_NEXT_A89.s4p",
+            str(DATA / "Std_BP_12inch_Meg7_NEXT_A23.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_NEXT_A56.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_NEXT_A89.s4p"),
         ],
         fext_paths=[
-            DATA / "Std_BP_12inch_Meg7_FEXT_B23.s4p",
-            DATA / "Std_BP_12inch_Meg7_FEXT_B89.s4p",
-            DATA / "Std_BP_12inch_Meg7_FEXT_C23.s4p",
-            DATA / "Std_BP_12inch_Meg7_FEXT_C56.s4p",
-            DATA / "Std_BP_12inch_Meg7_FEXT_C89.s4p",
+            str(DATA / "Std_BP_12inch_Meg7_FEXT_B23.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_FEXT_B89.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_FEXT_C23.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_FEXT_C56.s4p"),
+            str(DATA / "Std_BP_12inch_Meg7_FEXT_C89.s4p"),
         ],
         # Std_BP_12inch_Meg7's own port order is (TX+, TX-, RX+, RX-) --
         # already adjacent-paired (see Index_S4P-2019-3628.txt: "Port 1/2
@@ -161,16 +158,16 @@ def main() -> None:
         # peters_*/Case4_* files' interleaved (TX+, RX+, TX-, RX-) order
         # differential_network assumes by default.
         port_order=(0, 1, 2, 3),
-        on_search_progress=_progress,
+        show_progress=True,
     )
-    result = evaluation.result
+    result = compute(params)
 
-    print(f"CTLE DC gain:      {evaluation.dc_gain_db:.1f} dB")
-    print(f"CTLE shelf gain:   {evaluation.shelf_gain_db:.1f} dB")
-    print(f"Tx FFE taps:       {evaluation.tx_taps}")
+    print(f"CTLE DC gain:      {params.ctle_dc_gain_db:.1f} dB")
+    print(f"CTLE shelf gain:   {params.ctle_shelf_gain_db:.1f} dB")
+    print(f"Tx FFE taps:       {params.ffe_tap_weights}")
     print()
-    verdict = "PASS" if evaluation.passes else "FAIL"
-    print(f"COM:               {result.com_db:.3f} dB ({verdict} @ {evaluation.com_min_db} dB)")
+    verdict = "PASS" if result.com_db >= STANDARD.com_min_db else "FAIL"
+    print(f"COM:               {result.com_db:.3f} dB ({verdict} @ {STANDARD.com_min_db} dB)")
     print(f"Signal amplitude:  {result.signal_amplitude * 1e3:.3f} mV")
     print(f"Noise amplitude:   {result.noise_amplitude * 1e3:.3f} mV")
     print(f"sigma_Tx:          {result.sigma_tx * 1e3:.3f} mV")
