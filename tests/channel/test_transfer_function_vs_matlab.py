@@ -8,22 +8,23 @@ Reuses tests/package/test_cascade_vs_matlab_c2c.py's already-validated
 ground truth (matlab_golden/data/channel_plus_package_c2c_thru.csv) --
 that test confirmed cascade_channel's own raw S-parameters (no taper)
 match MATLAB exactly. This test checks the next layer up:
-transfer_function() itself, which applies a raised-cosine taper across
-the *entire* queried band (not just any extrapolated tail) before
-returning H21.
+transfer_function() itself.
 
-EXPECTED TO FAIL, deliberately, at least in part: traced the taper to
-PyChOpMarg's own calc_H21 (pychopmarg/utility/filter.py) -- serdeskit's
-transfer_function() is a faithful transcription of it, not a serdeskit-
-specific bug (see tests/channel/test_channel_transfer_function.py's own
-already-passing PyChOpMarg golden test). But MATLAB never applies
-anything like this at the H21 level -- it handles extrapolation/
-causality entirely differently, via time-domain alternating-projections
-causality correction (com_ieee8023_93a_370.m's own s21_to_impulse_DC),
-not frequency-domain windowing. So this is a real, understood
-PyChOpMarg-vs-MATLAB divergence, same shape as the RX tline_segments one
-(docs/known-issues.md) -- pinned down here before deciding what (if
-anything) to do about it.
+Originally found failing here: transfer_function() applied a
+raised-cosine taper across the *entire* queried band (not just any
+extrapolated tail) before returning H21 -- traced to PyChOpMarg's own
+calc_H21 (pychopmarg/utility/filter.py), a faithful transcription, not a
+serdeskit-specific bug. But MATLAB never applies anything like this at
+the H21 level -- it handles extrapolation/causality entirely
+differently, via time-domain alternating-projections causality
+correction (com_ieee8023_93a_370.m's own s21_to_impulse_DC), which is
+itself off by default (`OP.ENFORCE_CAUSALITY = 0`, "Not recommended") in
+every config this project has exercised -- so MATLAB's real behavior
+here is simply "no taper, no correction." Fixed by dropping the taper
+entirely (docs/known-issues.md); tests/conftest.py's own
+no_raised_cosine_taper fixture keeps PyChOpMarg-golden-reference tests
+elsewhere comparable by stripping the same taper from calc_H21 for their
+duration.
 """
 from __future__ import annotations
 

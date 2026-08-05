@@ -135,9 +135,9 @@ def test_com_on_real_example2_data() -> None:
 
     result = Com(link=link, params=params, next_channels=next_channels, fext_channels=fext_channels).compute()
 
-    assert result.com_db == pytest.approx(3.580216471679008, rel=1e-9)
-    assert result.signal_amplitude == pytest.approx(0.03055672071331621, rel=1e-9)
-    assert result.noise_amplitude == pytest.approx(0.020234660456357995, rel=1e-9)
-    assert result.sigma_tx == pytest.approx(0.0013649185772577823, rel=1e-9)
-    assert result.sigma_jitter == pytest.approx(0.0002510472461118984, rel=1e-9)
+    assert result.com_db == pytest.approx(3.580216471679006, rel=1e-9)
+    assert result.signal_amplitude == pytest.approx(0.030576869355415422, rel=1e-9)
+    assert result.noise_amplitude == pytest.approx(0.020248002887156096, rel=1e-9)
+    assert result.sigma_tx == pytest.approx(0.0013658185840407663, rel=1e-9)
+    assert result.sigma_jitter == pytest.approx(0.00025119611998381306, rel=1e-9)
     assert result.sigma_noise == pytest.approx(0.0007599076517400535, rel=1e-9)

@@ -103,13 +103,19 @@ class SParameterChannel:
         perfect termination, gamma1=gamma2=0).
 
         Frequencies beyond this channel's measured band are handled the
-        same way PyChOpMarg's `calc_H21` does: extrapolate the network to
-        DC, cubic-interpolate in-band, then hold the last in-band value
-        constant (edge-pad) beyond it — not a policy this project has
-        independently settled on; matched here for golden-test
-        comparability (see the S-parameter-extrapolation discussion in
-        this project's history for why: PyChOpMarg and the official IEEE
-        802.3 MATLAB COM tool don't even agree with each other on this).
+        same way MATLAB COM3.70's own `chdata(i).sdd21` construction does:
+        extrapolate the network to DC, cubic-interpolate in-band, then
+        hold the last in-band value constant (edge-pad) beyond it — no
+        raised-cosine taper. PyChOpMarg's own `calc_H21` does apply one
+        (across the *entire* band, not just the padded region), and this
+        function used to transcribe it — but that has no MATLAB
+        counterpart at all, at any point (with or without MATLAB's own,
+        off-by-default causality correction — see docs/known-issues.md),
+        and MATLAB, not PyChOpMarg, is this project's authoritative
+        reference. Confirmed against MATLAB's own channel+package S21 for
+        a real channel (`matlab_golden/data/channel_plus_package_c2c_thru.csv`,
+        `tests/channel/test_transfer_function_vs_matlab.py`): matches to
+        float precision without the taper.
 
         Cached against the exact `freqs` array object last used: an
         equalization search calls this same channel with the same
@@ -136,8 +142,8 @@ class SParameterChannel:
         )
         pad_len = len(freqs) - len(in_band.f)
         s11 = np.pad(in_band.s[:, 0, 0], (0, pad_len), mode="edge")
-        s12 = np.pad(_raised_cosine(in_band.s[:, 0, 1]), (0, pad_len), mode="edge")
-        s21 = np.pad(_raised_cosine(in_band.s[:, 1, 0]), (0, pad_len), mode="edge")
+        s12 = np.pad(in_band.s[:, 0, 1], (0, pad_len), mode="edge")
+        s21 = np.pad(in_band.s[:, 1, 0], (0, pad_len), mode="edge")
         s22 = np.pad(in_band.s[:, 1, 1], (0, pad_len), mode="edge")
 
         g1, g2 = self.gamma1, self.gamma2
@@ -216,18 +222,6 @@ class SParameterChannel:
         out = np.asarray(fftconvolve(sig.samples, h_trimmed, mode="valid"), dtype=np.float64)
         t0 = sig.t0 + (delay_samples + len(h_trimmed) - 1) * dt
         return Signal(samples=out, fs=sig.fs, t0=t0)
-
-
-def _raised_cosine(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
-    """(93A-18): tapers `x` from full weight at its first entry to zero
-    weight at its last, per PyChOpMarg's own `raised_cosine` — applied to
-    S12/S21 (not S11/S22) before edge-padding beyond the measured band, so
-    the padded region holds a near-zero value rather than the untapered
-    edge value.
-    """
-    n = len(x)
-    w = (np.cos(np.pi * np.arange(n) / n) + 1) / 2
-    return np.asarray(w * x, dtype=np.complex128)
 
 
 def _trim_impulse(

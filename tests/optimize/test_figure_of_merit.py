@@ -94,6 +94,8 @@ def setup() -> Iterator[Setup]:
         mp.setattr(pychopmarg.utility.filter, "TWOPI", 2 * np.pi)
         mp.setattr(pychopmarg.com, "PI", np.pi)
         mp.setattr(pychopmarg.com, "TWOPI", 2 * np.pi)
+        # See tests/conftest.py's own no_raised_cosine_taper fixture.
+        mp.setattr(pychopmarg.utility.filter, "raised_cosine", lambda x: x)
 
         freq = np.linspace(1e8, 40e9, 400)
         tmp = Path(tempfile.mkdtemp())

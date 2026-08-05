@@ -109,7 +109,7 @@ def _expected_pulse_response(com: COM) -> npt.NDArray[np.float64]:
     return np.asarray(com.pulse_resp(h), dtype=np.float64)
 
 
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi", "no_raised_cosine_taper")
 def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
     cfg = _com_params()
     com = COM(cfg, {"THRU": [synthetic_s4p], "FEXT": [], "NEXT": []}, debug=True)
@@ -152,7 +152,7 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-15)
 
 
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi", "no_raised_cosine_taper")
 def test_matches_pychopmarg_end_to_end_with_rx_ffe(
     synthetic_s4p: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

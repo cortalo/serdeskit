@@ -20,7 +20,7 @@ def _network_with_reflection(freq: npt.NDArray[np.float64]) -> skrf.Network:
     return skrf.Network(f=freq, s=s, z0=50, f_unit="Hz")
 
 
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi", "no_raised_cosine_taper")
 def test_matches_pychopmarg_golden_reference() -> None:
     """(93A-18). The target frequency grid intentionally extends beyond the
     network's own measured band (1-20 GHz) and doesn't start at DC, to
@@ -43,7 +43,7 @@ def test_matches_pychopmarg_golden_reference() -> None:
     np.testing.assert_allclose(actual, expected, atol=1e-9)
 
 
-@pytest.mark.usefixtures("exact_pi")
+@pytest.mark.usefixtures("exact_pi", "no_raised_cosine_taper")
 def test_default_gamma_matches_golden_reference_with_zero_reflection() -> None:
     """Default gamma1=gamma2=0.0 (perfectly matched, no reflection) must
     match calc_H21 called with g1=g2=0 too — not independent of the golden

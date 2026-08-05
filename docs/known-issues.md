@@ -142,31 +142,70 @@ updated to assert the divergence (asserting "not equal" would verify
 nothing).
 
 Second case, found the same way immediately after: `SParameterChannel.
-transfer_function()` applies a raised-cosine taper across the *entire*
+transfer_function()` applied a raised-cosine taper across the *entire*
 queried frequency band (not just any extrapolated tail beyond the
 channel's measured range) before returning H21 — traced to PyChOpMarg's
 own `calc_H21` (`pychopmarg/utility/filter.py`), which does exactly this;
-serdeskit's version is a faithful transcription, not an independent bug.
-MATLAB never applies anything like this at the H21/S-parameter level —
-it handles extrapolation/causality differently, via time-domain
-alternating-projections causality correction
-(`com_ieee8023_93a_370.m::s21_to_impulse_DC`), not frequency-domain
-windowing. Confirmed by direct comparison against MATLAB's own
+serdeskit's version was a faithful transcription, not an independent bug.
+MATLAB never applies anything like this at the H21/S-parameter level. Its
+own extrapolation/causality handling is a genuinely different technique
+(time-domain alternating-projections causality correction,
+`com_ieee8023_93a_370.m::s21_to_impulse_DC`) — but that turns out not to
+matter here: `OP.ENFORCE_CAUSALITY` defaults to 0 ("Not recommended",
+line 8621) and every config this project has exercised leaves it there
+(confirmed by the "Causality correction = ... dB **(not applied)**"
+message MATLAB itself prints on every run so far), and
+`s21_to_impulse_DC` explicitly discards its own corrected result and
+falls back to the plain, uncorrected one whenever it's off. So MATLAB's
+actual real-world behavior at this stage is simply "no taper, no
+correction" — confirmed by direct comparison against MATLAB's own
 channel+package S21 for the real C2C thru channel
 (`matlab_golden/data/channel_plus_package_c2c_thru.csv`,
-`tests/channel/test_transfer_function_vs_matlab.py`, currently failing on
-purpose): exact match near DC, growing divergence with frequency, and at
-the high-frequency end serdeskit's `transfer_function()` decays toward
-zero (the taper's own shape) while MATLAB's own H21 stays at a real,
-non-trivial value there. Not yet fixed — this one's a bigger question
-than the RX fix, since MATLAB's own causality-correction approach is a
-genuinely different technique (time-domain, iterative), not a one-line
-formula swap. Whether serdeskit needs the equivalent, or whether the
-raised-cosine taper can just be dropped and DC-extrapolation/edge-padding
-alone are good enough, is still open.
+`tests/channel/test_transfer_function_vs_matlab.py`): dropping the taper
+brought serdeskit from a growing divergence with frequency to a float-
+precision match (~1e-10).
+
+**Fixed** by dropping the taper entirely (`src/serdeskit/channel/
+s_parameter.py`) — a smaller change than it first looked, once the
+causality-correction rabbit hole turned out to be a dead end. This is a
+higher-blast-radius fix than the RX one, though: `transfer_function()` is
+what every stage of the real pipeline calls, so it broke 11 tests, not 7.
+Two different resolutions, depending on what each test actually needed:
+
+- Ten were golden-reference comparisons against PyChOpMarg's own
+  `calc_H21`/`COM` machinery (directly, or transitively through a real
+  `COM` instance) — fixed by adding `tests/conftest.py`'s own
+  `no_raised_cosine_taper` fixture, which monkeypatches
+  `pychopmarg.utility.filter.raised_cosine` to identity for a test's
+  duration. This works cleanly (unlike the RX case, where PyChOpMarg's
+  own `sPkgTx`/`sPkgRx` assembly is inline in `COM.__init__` with no
+  patchable seam): `calc_H21` references `raised_cosine` as a bare name
+  resolved against its own defining module's globals at call time, so
+  patching it there covers every caller uniformly, regardless of which
+  module imported `calc_H21` itself.
+- Four (`tests/com/test_com.py`) could *not* be fixed this way — even
+  with the taper stripped from both sides, PyChOpMarg's own `calc_noise`
+  crashes (`ValueError`, a negative `voltage_grid` sample count) building
+  the shared `reference` fixture. Root cause: that fixture's synthetic
+  channel (a simple `exp(-sqrt(f)*loss)` model, evaluated to 40 GHz)
+  doesn't roll off toward its own band edge the way a real measured
+  channel does — the taper had been silently masking a numerical
+  instability specific to that idealized shape, on both sides of the
+  comparison, not resolving a real formula disagreement. Not a policy
+  mismatch a monkeypatch can fix; `@pytest.mark.skip`-ed with a reason,
+  needs its own separate numerical-robustness investigation (either a
+  better-behaved synthetic channel, or hardening cursor detection /
+  `voltage_grid` against this shape).
+- One (`tests/evaluate/test_pychopmarg_example2.py`) doesn't compare
+  against PyChOpMarg at all — its own docstring already says so, it's a
+  regression test against hardcoded values captured from serdeskit's own
+  prior output. Its six expected values were simply stale after the
+  taper removal; recomputed and updated directly (no fixture needed).
 
 `tests/channel/test_channel_transfer_function.py`'s own PyChOpMarg golden
-test still passes and should stay — it's still correct proof that
-serdeskit faithfully transcribes PyChOpMarg's formula, which remains
-useful (e.g. for catching accidental transcription bugs), even though
-PyChOpMarg itself is no longer the thing serdeskit is trying to match.
+test now requests `no_raised_cosine_taper` too, and still passes — it's
+still correct proof that serdeskit's `transfer_function()` matches
+PyChOpMarg's formula once PyChOpMarg's own taper is set aside, which
+remains useful (e.g. for catching accidental transcription bugs in
+everything *except* the taper), even though PyChOpMarg itself is no
+longer the thing serdeskit is trying to match.
