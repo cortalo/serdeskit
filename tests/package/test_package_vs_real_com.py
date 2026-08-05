@@ -105,6 +105,7 @@ def test_tx_matches_a_real_com_instances_own_sPkgTx(com: COM) -> None:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_rx_matches_a_real_com_instances_own_sPkgRx(com: COM) -> None:
     actual = _package(com, is_rx=True).network(com.freqs)
 

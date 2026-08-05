@@ -106,6 +106,7 @@ def _raw_channel_differential(path: Path) -> skrf.Network:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_matches_pychopmargs_own_add_pkg_h21(com_and_channel_path: tuple[COM, Path]) -> None:
     com, path = com_and_channel_path
     freqs = com.freqs

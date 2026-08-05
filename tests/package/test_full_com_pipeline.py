@@ -292,6 +292,7 @@ def _build_com(ref: Reference) -> Com:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     """The closed-form sigmas (unaffected by PMF-convolution floating-
     point accumulation — see test_com.py's own reasoning) at this
@@ -313,6 +314,7 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_noise_pmf_and_crosstalk_sigma_match_pychopmarg(reference: Reference) -> None:
     """Looser tolerance, same reasoning as test_com.py's own crosstalk
     PMF test: these are derived from several chained mode="same"

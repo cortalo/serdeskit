@@ -291,6 +291,7 @@ def _build_com(ref: Reference) -> Com:
     "reference fixture, not just serdeskit's side. Not a policy mismatch a "
     "monkeypatch can fix -- needs its own numerical-robustness investigation."
 )
+@pytest.mark.h21_taper_removal
 def test_com_value_matches_pychopmarg(reference: Reference) -> None:
     """Weak on its own, and deliberately kept anyway.
 
@@ -328,6 +329,7 @@ def test_com_value_matches_pychopmarg(reference: Reference) -> None:
     "reference fixture, not just serdeskit's side. Not a policy mismatch a "
     "monkeypatch can fix -- needs its own numerical-robustness investigation."
 )
+@pytest.mark.h21_taper_removal
 def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     """The headline number could match while a term inside is wrong, since
     COM is a ratio and the noise terms combine — so each is checked.
@@ -358,6 +360,7 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     "reference fixture, not just serdeskit's side. Not a policy mismatch a "
     "monkeypatch can fix -- needs its own numerical-robustness investigation."
 )
+@pytest.mark.h21_taper_removal
 def test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors(reference: Reference) -> None:
     """noise_amplitude/com_db alone don't prove the crosstalk aggressors
     were folded in correctly: per test_com_value_matches_pychopmarg's own
@@ -390,6 +393,7 @@ def test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors(reference: Refer
     "reference fixture, not just serdeskit's side. Not a policy mismatch a "
     "monkeypatch can fix -- needs its own numerical-robustness investigation."
 )
+@pytest.mark.h21_taper_removal
 def test_result_carries_a_usable_distribution(reference: Reference) -> None:
     """The PMF and its axis are carried for diagnosis and plotting, so
     they should be a genuine distribution on a genuine axis, not leftovers.

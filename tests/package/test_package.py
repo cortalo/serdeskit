@@ -79,6 +79,7 @@ def test_tx_matches_pychopmarg_golden_reference() -> None:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_rx_matches_pychopmarg_golden_reference() -> None:
     freqs = np.linspace(0, 50e9, 501)
 

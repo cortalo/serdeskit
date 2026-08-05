@@ -29,6 +29,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "rx_tline_segments: skipped, deliberately diverges from PyChOpMarg's RX package assembly (commit 631f2f5, docs/known-issues.md)",
+    "h21_taper_removal: skipped or fixture-adjusted due to dropping SParameterChannel.transfer_function()'s raised-cosine taper (commit 59fe9ba, docs/known-issues.md)",
+]
 
 [tool.ruff]
 line-length = 100

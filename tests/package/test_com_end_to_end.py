@@ -238,6 +238,7 @@ def _build_com(ref: Reference) -> Com:
     "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
     "them -- see docs/known-issues.md"
 )
+@pytest.mark.rx_tline_segments
 def test_com_matches_pychopmarg_with_package_modeling(reference: Reference) -> None:
     result = _build_com(reference).compute()
 
