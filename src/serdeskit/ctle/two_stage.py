@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 import numpy.typing as npt
+from scipy.signal import lfilter
 
 from serdeskit.common.types import Signal
 
@@ -68,9 +69,42 @@ class TwoStageCtle:
         return np.asarray(num / den, dtype=np.complex128)
 
     def process(self, sig: Signal) -> Signal:
-        """Not needed by COM's own methodology — COM composes each stage's
-        transfer_function() in the frequency domain and does a single
-        IFFT, rather than calling a per-stage Signal -> Signal process()
-        (same situation as ffe.TapWeightFfe.process()).
+        """Time-domain path: two bilinear-transform IIR filters applied in
+        sequence, one per stage — matching MATLAB COM3.70's own `TD_CTLE`
+        (`com_ieee8023_93a_370.m:2228-2243`), called twice
+        (`:5925`/`:5930`) rather than this class's own `transfer_function()`
+        multiplied into a shared frequency-domain composition. Verified
+        against MATLAB's own `TD_CTLE` output directly:
+        `tests/ctle/test_two_stage_process_vs_matlab.py`.
         """
-        raise NotImplementedError
+        stage1 = _bilinear_iir(sig.samples, sig.fs, self.zero_freq, self.pole1_freq, self.pole2_freq, self.dc_gain_db)
+        stage2 = _bilinear_iir(stage1, sig.fs, self.shelf_freq, self.shelf_freq, 100e100, self.shelf_gain_db)
+        return Signal(samples=stage2, fs=sig.fs, t0=sig.t0)
+
+
+def _bilinear_iir(
+    ir_in: npt.NDArray[np.float64], fs: float, f_z: float, f_p1: float, f_p2: float, kacdc_db: float
+) -> npt.NDArray[np.float64]:
+    """One (93A-22) zero/two-pole stage, bilinear-transformed to a
+    discrete IIR filter at sample rate `fs` and applied to `ir_in` —
+    MATLAB's own `TD_CTLE`, transcribed directly (`bilinear_fs = 2*fb*
+    oversampling` there is just `2*fs` here: `fb*oversampling` is the
+    sample rate by definition, so there's nothing to recover separately).
+    `f_p2=100e100` (as `TwoStageCtle.process()` passes for the shelf
+    stage) makes its own bilinear-transformed pole land at `z=-1`,
+    canceling the zero this filter's numerator always has there —
+    collapsing it to a true single-pole/zero stage.
+    """
+    p1 = -2 * np.pi * f_p1
+    p2 = -2 * np.pi * f_p2
+    z = -2 * np.pi * f_z * 10 ** (kacdc_db / 20)
+    k = -p2
+    bilinear_fs = 2 * fs
+    p1d = (1 + p1 / bilinear_fs) / (1 - p1 / bilinear_fs)
+    p2d = (1 + p2 / bilinear_fs) / (1 - p2 / bilinear_fs)
+    zd = (1 + z / bilinear_fs) / (1 - z / bilinear_fs)
+    kd = (bilinear_fs - z) / ((bilinear_fs - p1) * (bilinear_fs - p2)) * f_p1 / f_z
+
+    b = k * kd * np.array([1, 1 - zd, -zd])
+    a = np.array([1, -(p1d + p2d), p1d * p2d])
+    return np.asarray(lfilter(b, a, ir_in), dtype=np.float64)
