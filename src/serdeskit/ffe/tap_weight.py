@@ -4,7 +4,10 @@ tap weights, satisfying serdeskit.link.Ffe's `process` implicitly.
 Physical picture: an FFE's frequency response, per IEEE 802.3-2022 Annex
 93A equation 93A-21, is the DTFT of its tap sequence — H(f) = sum_n b_n *
 exp(-j*2*pi*n*T*f), T (`tap_delay`) being the spacing between adjacent
-taps (one UI, for a baud-spaced FFE).
+taps (one UI, for a baud-spaced FFE). Delay is referenced to the
+cursor/main tap (n=0) rather than the first (most-precursor) tap, matching
+MATLAB COM3.70's own `FFE` (a time-domain circshift-based tap-delay sum) —
+see tests/ffe/test_tap_weight_vs_matlab.py.
 
 The cursor/main tap, b_0, is deliberately *not* a constructor argument:
 per COM's convention, it isn't a free parameter — only the pre/post-cursor
@@ -57,7 +60,7 @@ class TapWeightFfe:
         taps = np.concatenate(
             [self.tap_weights[:n_pre], [self.cursor_weight], self.tap_weights[n_pre:]]
         )
-        delays = np.arange(len(taps))
+        delays = np.arange(len(taps)) - n_pre
         return np.asarray(
             taps @ np.exp(np.outer(delays, -1j * 2 * np.pi * self.tap_delay * freqs)),
             dtype=np.complex128,

@@ -34,6 +34,7 @@ from pychopmarg.utility.sparams import sdd_21
 
 from serdeskit.channel import SParameterChannel
 from serdeskit.com import ComParams
+from serdeskit.common.types import Signal
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Link, SystemGrid
@@ -202,12 +203,29 @@ def _params(setup: Setup) -> ComParams:
     )
 
 
+def _delay_convention_shift(setup: Setup, p: ComParams) -> int:
+    """TapWeightFfe references delay 0 at the *cursor* tap (matching MATLAB
+    COM3.70's own FFE — see tests/ffe/test_tap_weight_vs_matlab.py), while
+    PyChOpMarg's calc_fom (via its own Hffe convention) references delay 0
+    at the *first* (most-precursor) tap. That's a pure linear-phase
+    difference in the frequency domain, i.e. a pure circular shift of
+    n_pre UI in the IFFT'd pulse response -- roll it out of every pulse
+    response fed into figure_of_merit() before comparing against PyChOpMarg,
+    same fix as tests/link/test_pulse_response_vs_pychopmarg.py.
+    """
+    tx_taps = np.array(setup.com._tx_combs[TX_COMB_IX])
+    n_pre = len(tx_taps) - N_TX_POST_TAPS
+    return n_pre * p.samples_per_ui
+
+
 def _figure_of_merit(setup: Setup) -> float:
     p = _params(setup)
     grid = SystemGrid.build(p.baud_rate, p.freq_step, p.samples_per_ui)
+    shift = _delay_convention_shift(setup, p)
 
     victim_link = _link(setup, setup.thru_path)
     signal = victim_link.ffe_channel_ctle_pulse_response(grid).scale(p.victim_amplitude)
+    signal = Signal(samples=np.roll(signal.samples, shift), fs=signal.fs, t0=signal.t0)
     pulse_response = PulseResponse.from_signal(
         signal, ui=1.0 / p.baud_rate, dfe1_max=float(p.dfe_max[0]), dfe1_min=float(p.dfe_min[0]),
     )
@@ -216,7 +234,10 @@ def _figure_of_merit(setup: Setup) -> float:
         (path, p.a_ne, True) for path in setup.next_paths
     ]
     aggressor_pulse_responses = [
-        _link(setup, path, flat_tx=flat_tx).ffe_channel_ctle_pulse_response(grid).scale(amplitude).samples
+        np.roll(
+            _link(setup, path, flat_tx=flat_tx).ffe_channel_ctle_pulse_response(grid).scale(amplitude).samples,
+            shift,
+        )
         for path, amplitude, flat_tx in aggressor_paths_amplitudes_and_flatness
     ]
 

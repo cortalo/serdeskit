@@ -32,6 +32,7 @@ testpaths = ["tests"]
 markers = [
     "rx_tline_segments: skipped, deliberately diverges from PyChOpMarg's RX package assembly (commit 631f2f5, docs/known-issues.md)",
     "h21_taper_removal: skipped or fixture-adjusted due to dropping SParameterChannel.transfer_function()'s raised-cosine taper (commit 59fe9ba, docs/known-issues.md)",
+    "ffe_cursor_referenced_delay: skipped or fixture-adjusted due to TapWeightFfe referencing delay 0 at the cursor tap instead of the first tap, to match MATLAB (docs/known-issues.md)",
 ]
 
 [tool.ruff]

@@ -145,11 +145,17 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
     actual = link.ffe_channel_ctle_pulse_response(grid).samples
 
     assert actual.shape == expected.shape
-    # With `exact_pi` removing PyChOpMarg's truncated-PI difference, the two
-    # implementations agree to floating-point noise (~1e-17 observed against
-    # a ~4e-2 peak) rather than merely closely — so this asserts genuine
-    # equivalence of the whole (93A-19)+(93A-24) chain, not just proximity.
-    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-15)
+    # TapWeightFfe references delay 0 at the *cursor* tap (matching MATLAB
+    # COM3.70's own FFE — see tests/ffe/test_tap_weight_vs_matlab.py), while
+    # PyChOpMarg's calc_Hffe (which com.H() calls) references delay 0 at the
+    # *first* (most-precursor) tap. That's a pure linear-phase difference in
+    # the frequency domain, i.e. a pure circular shift of n_pre UI in the
+    # IFFT'd pulse response -- roll it out before comparing so this still
+    # asserts genuine equivalence of the whole (93A-19)+(93A-24) chain (to
+    # floating-point noise), not just proximity.
+    n_pre = len(tx_taps) - N_TX_POST_TAPS
+    aligned = np.roll(actual, n_pre * cfg.M)
+    np.testing.assert_allclose(aligned, expected, rtol=0, atol=1e-15)
 
 
 @pytest.mark.usefixtures("exact_pi", "no_raised_cosine_taper")
@@ -215,4 +221,7 @@ def test_matches_pychopmarg_end_to_end_with_rx_ffe(
     actual = link.ffe_channel_ctle_pulse_response(grid).samples
 
     assert actual.shape == expected.shape
-    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-15)
+    # See the FFE delay-convention note in test_matches_pychopmarg_end_to_end.
+    n_pre = len(tx_taps) - N_TX_POST_TAPS
+    aligned = np.roll(actual, n_pre * cfg.M)
+    np.testing.assert_allclose(aligned, expected, rtol=0, atol=1e-15)
