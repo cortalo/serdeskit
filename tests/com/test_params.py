@@ -1,16 +1,54 @@
 import numpy as np
 import pytest
 
-pytest.skip(
-    "references the removed ComParams API (level_variance now lives on LinkComParams/ComStandard) -- needs updating",
-    allow_module_level=True,
-)
-
-from serdeskit.com import ComParams
+from serdeskit.com import LinkComParams
 
 
-def _params(levels: int) -> ComParams:
-    return ComParams(
+def _params(levels: int) -> LinkComParams:
+    """Every field level_variance doesn't touch is a placeholder --
+    LinkComParams has no defaults (see its own docstring for why), so a
+    test that only cares about `levels`/`level_variance` still has to
+    supply the rest.
+    """
+    return LinkComParams(
+        channel_path="unused.s4p",
+        next_channel_paths=(),
+        fext_channel_paths=(),
+        port_order=(0, 2, 1, 3),
+        gamma1=0.0,
+        gamma2=0.0,
+        tx_r0=50.0,
+        tx_die_capacitances=(),
+        tx_die_inductances=(),
+        tx_bump_capacitance=0.0,
+        tx_tline_a1=0.0,
+        tx_tline_a2=0.0,
+        tx_tline_tau=0.0,
+        tx_tline_gamma0=0.0,
+        tx_tline_segments=(),
+        tx_pad_capacitance=0.0,
+        rx_r0=50.0,
+        rx_die_capacitances=(),
+        rx_die_inductances=(),
+        rx_bump_capacitance=0.0,
+        rx_tline_a1=0.0,
+        rx_tline_a2=0.0,
+        rx_tline_tau=0.0,
+        rx_tline_gamma0=0.0,
+        rx_tline_segments=(),
+        rx_pad_capacitance=0.0,
+        ctle_zero_freq=1.0,
+        ctle_pole1_freq=1.0,
+        ctle_pole2_freq=1.0,
+        ctle_shelf_freq=1.0,
+        ctle_dc_gain_db=0.0,
+        ctle_shelf_gain_db=0.0,
+        ffe_tap_weights=np.array([]),
+        ffe_n_post=0,
+        tx_risetime=0.0,
+        rx_afe_cutoff_freq=1.0,
+        rx_ffe_tap_weights=np.array([1.0]),
+        rx_ffe_n_pre=0,
         baud_rate=100e9,
         freq_step=1e8,
         samples_per_ui=32,

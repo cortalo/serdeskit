@@ -17,25 +17,13 @@ import pychopmarg.com
 import pychopmarg.utility.filter
 import pytest
 import skrf
-
-pytest.skip(
-    "references the removed Com/ComParams API (now compute()/LinkComParams) -- needs updating",
-    allow_module_level=True,
-)
-
 from pychopmarg.com import COM
 from pychopmarg.common import COMChnl, OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
 from pychopmarg.utility.filter import calc_H21
 from pychopmarg.utility.sparams import sdd_21
 
-from serdeskit.channel import SParameterChannel
-from serdeskit.com import Com, ComParams
-from serdeskit.ctle import TwoStageCtle
-from serdeskit.ffe import TapWeightFfe
-from serdeskit.link import Link
-from serdeskit.rx_afe import RxAfeButterworth
-from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.com import LinkComParams, compute
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -241,27 +229,56 @@ def _build_reference() -> Reference:
     )
 
 
-def _build_com(ref: Reference) -> Com:
+def _params(ref: Reference) -> LinkComParams:
+    """No package model, matching this test's own reference (`_no_pkg_chnl`
+    builds `com.chnls` package-free) and this file's own prior
+    `SParameterChannel.from_touchstone()` (no `cascade_channel` call at
+    all). `compute()` always cascades a package, so the closest
+    equivalent is a degenerate one: zero capacitances/inductances (no
+    shunt effect) and a zero-length, exactly-matched-impedance line (no
+    reflection, no delay) -- together, an identity two-port.
+    """
     zero, pole1, pole2, shelf = ref.ctle_freqs
-    link = Link(
-        channel=SParameterChannel.from_touchstone(str(ref.channel_path)),
-        ctle=TwoStageCtle(
-            zero_freq=zero,
-            pole1_freq=pole1,
-            pole2_freq=pole2,
-            shelf_freq=shelf,
-            dc_gain_db=G_DC,
-            shelf_gain_db=G_DC2,
-        ),
-        ffe=TapWeightFfe(
-            tap_weights=ref.tx_taps,
-            n_post=N_TX_POST_TAPS,
-            tap_delay=1.0 / ref.baud_rate,
-        ),
-        rx_afe=RxAfeButterworth(cutoff_freq=ref.afe_cutoff),
-        rx_ffe=TapWeightRxFfe(tap_weights=ref.rx_taps, tap_delay=1.0 / ref.baud_rate),
-    )
-    params = ComParams(
+    r0 = 50.0
+    return LinkComParams(
+        channel_path=str(ref.channel_path),
+        next_channel_paths=[str(p) for p in ref.next_channel_paths],
+        fext_channel_paths=[str(p) for p in ref.fext_channel_paths],
+        port_order=(0, 2, 1, 3),
+        gamma1=0.0,
+        gamma2=0.0,
+        tx_r0=r0,
+        tx_die_capacitances=[0.0],
+        tx_die_inductances=[0.0],
+        tx_bump_capacitance=0.0,
+        tx_tline_a1=0.0,
+        tx_tline_a2=0.0,
+        tx_tline_tau=0.0,
+        tx_tline_gamma0=0.0,
+        tx_tline_segments=[(2 * r0, 0.0)],
+        tx_pad_capacitance=0.0,
+        rx_r0=r0,
+        rx_die_capacitances=[0.0],
+        rx_die_inductances=[0.0],
+        rx_bump_capacitance=0.0,
+        rx_tline_a1=0.0,
+        rx_tline_a2=0.0,
+        rx_tline_tau=0.0,
+        rx_tline_gamma0=0.0,
+        rx_tline_segments=[(2 * r0, 0.0)],
+        rx_pad_capacitance=0.0,
+        ctle_zero_freq=zero,
+        ctle_pole1_freq=pole1,
+        ctle_pole2_freq=pole2,
+        ctle_shelf_freq=shelf,
+        ctle_dc_gain_db=G_DC,
+        ctle_shelf_gain_db=G_DC2,
+        ffe_tap_weights=ref.tx_taps,
+        ffe_n_post=N_TX_POST_TAPS,
+        tx_risetime=0.0,  # matches PyChOpMarg's own H(), no Tx risetime factor
+        rx_afe_cutoff_freq=ref.afe_cutoff,
+        rx_ffe_tap_weights=ref.rx_taps,
+        rx_ffe_n_pre=0,
         baud_rate=ref.baud_rate,
         freq_step=ref.freq_step,
         samples_per_ui=ref.samples_per_ui,
@@ -277,12 +294,6 @@ def _build_com(ref: Reference) -> Com:
         der_0=ref.der_0,
         dfe_min=ref.dfe_min,
         dfe_max=ref.dfe_max,
-    )
-    return Com(
-        link=link,
-        params=params,
-        next_channels=[SParameterChannel.from_touchstone(str(p)) for p in ref.next_channel_paths],
-        fext_channels=[SParameterChannel.from_touchstone(str(p)) for p in ref.fext_channel_paths],
     )
 
 
@@ -319,7 +330,7 @@ def test_com_value_matches_pychopmarg(reference: Reference) -> None:
     carries the weight — every term feeding this number is checked
     individually, where saturation can't hide a discrepancy.
     """
-    result = _build_com(reference).compute()
+    result = compute(_params(reference))
 
     assert result.com_db == pytest.approx(reference.com_db, abs=1e-6)
 
@@ -340,7 +351,7 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     """The headline number could match while a term inside is wrong, since
     COM is a ratio and the noise terms combine — so each is checked.
     """
-    result = _build_com(reference).compute()
+    result = compute(_params(reference))
 
     assert result.signal_amplitude == pytest.approx(reference.signal_amplitude, rel=1e-9)
     assert result.noise_amplitude == pytest.approx(reference.noise_amplitude, rel=1e-9)
@@ -377,7 +388,7 @@ def test_noise_pmf_matches_pychopmarg_with_crosstalk_aggressors(reference: Refer
     (which includes two NEXT and one FEXT aggressor, per the `reference`
     fixture) sidesteps that — it can't agree by coincidence.
     """
-    result = _build_com(reference).compute()
+    result = compute(_params(reference))
 
     # Looser than this file's other rel=1e-9 comparisons: this PMF is
     # built from several chained mode="same" convolutions, each
@@ -404,7 +415,7 @@ def test_result_carries_a_usable_distribution(reference: Reference) -> None:
     """The PMF and its axis are carried for diagnosis and plotting, so
     they should be a genuine distribution on a genuine axis, not leftovers.
     """
-    result = _build_com(reference).compute()
+    result = compute(_params(reference))
 
     assert result.noise_pmf.shape == result.voltage_grid.shape
     assert result.noise_pmf.sum() == pytest.approx(1.0)
