@@ -24,6 +24,7 @@ class SystemGrid:
     t: npt.NDArray[np.float64]
     f: npt.NDArray[np.float64]
     x_sinc: npt.NDArray[np.float64]
+    samples_per_ui: int
 
     @classmethod
     def build(cls, baud_rate: float, freq_step: float, samples_per_ui: int) -> SystemGrid:
@@ -53,7 +54,7 @@ class SystemGrid:
 
         x_sinc = int(ui / t[1]) * np.sinc(ui * f)
 
-        return cls(t=t, f=f, x_sinc=x_sinc)
+        return cls(t=t, f=f, x_sinc=x_sinc, samples_per_ui=samples_per_ui)
 
     def pulse_response(self, h: npt.NDArray[np.complex128]) -> Signal:
         """(93A-24): p(t) = IFFT[x_sinc(f) * H(f)], the pulse response of
@@ -69,5 +70,37 @@ class SystemGrid:
             The pulse response, as a Signal.
         """
         p = np.fft.irfft(self.x_sinc * h)[: len(self.t)]
+        fs = 1.0 / (self.t[1] - self.t[0])
+        return Signal(samples=p, fs=fs, t0=0.0)
+
+    def truncated_pulse_response(self, h: npt.NDArray[np.complex128], threshold: float = 1e-3) -> Signal:
+        """MATLAB COM3.70's own two-step recipe, not this class's usual
+        single-IFFT one — see `s21_to_impulse_DC`
+        (`com_ieee8023_93a_370.m:9895-9964`) + the box-car integration
+        right after it (`:930`): IFFT to an impulse response, truncate
+        once its magnitude decays below `threshold * peak` (MATLAB's own
+        default, `OP.impulse_response_truncation_threshold`), *then*
+        box-car-integrate — via linear (causal, non-circular) convolution,
+        since the truncated array is no longer the periodic record
+        `pulse_response()` assumes. Exists only for `Link.
+        uneq_pulse_response()`, to test whether this — not CTLE/FFE's own
+        time- vs frequency-domain composition — explains this project's
+        residual divergence from MATLAB (docs/known-issues.md).
+
+        Args:
+            h: The system's transfer function, evaluated on `self.f`.
+            threshold: Truncate once |impulse| drops below this fraction
+                of its own peak. Default matches MATLAB's own default.
+
+        Returns:
+            The (shorter than `self.t`) pulse response, as a Signal.
+        """
+        impulse = np.fft.irfft(h)[: len(self.t)]
+        peak = np.max(np.abs(impulse))
+        last = int(np.max(np.nonzero(np.abs(impulse) > peak * threshold)))
+        truncated = impulse[: last + 1]
+
+        box = np.ones(self.samples_per_ui)
+        p = np.convolve(truncated, box, mode="full")[: len(truncated)]
         fs = 1.0 / (self.t[1] - self.t[0])
         return Signal(samples=p, fs=fs, t0=0.0)

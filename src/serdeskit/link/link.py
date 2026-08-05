@@ -129,6 +129,26 @@ class Link:
         eye = _extract_eye(sig, symbol_rate)
         return LinkResult(eye=eye)
 
+    def uneq_pulse_response(self, grid: SystemGrid) -> Signal:
+        """channel + tx_filter + rx_afe, IFFT'd — no ctle/ffe. Named after
+        and corresponds to `chdata(i).uneq_pulse_response`
+        (`com_ieee8023_93a_370.m:930`): MATLAB's own pipeline switches
+        from frequency-domain composition to a time-domain chain
+        (truncate, then `TD_CTLE`, then `FFE.m`) starting right after
+        this point — replicated here via `grid.truncated_pulse_response()`
+        rather than this class's usual `grid.pulse_response()`, to test
+        whether that (not CTLE/FFE's own time- vs frequency-domain
+        composition) explains this project's residual divergence from
+        MATLAB (docs/known-issues.md's "full composed pulse response"
+        entry).
+        """
+        h = (
+            self.channel.transfer_function(grid.f)
+            * self.tx_filter.transfer_function(grid.f)  # type: ignore[union-attr]
+            * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]
+        )
+        return grid.truncated_pulse_response(h)
+
     def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
         """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
         ctle's, ffe's, rx_afe's, and rx_ffe's transfer functions on a

@@ -352,39 +352,48 @@ failing at their original tight tolerance rather than loosened, since
 this residual is real and not yet explained (see below), not something
 to paper over.
 
-**Residual, not yet root-caused** (this project's earlier "~2% off"
-informal estimate, from before this investigation, roughly matches this
-number — plausibly the same unexplained gap, not coincidence). Leading
-untested candidates:
+**Update: root cause of the "uneq" (pre-CTLE/FFE) portion of the residual confirmed and fixed.**
+`Link.uneq_pulse_response()` (channel+tx_filter+rx_afe, no CTLE/FFE) vs.
+MATLAB's `chdata(1).uneq_pulse_response` initially showed a real shape
+gap (172/321 samples outside `rtol=1e-3, atol=1e-4` in a ±5 UI window,
+worst point ~1.4% of peak) even though the *frequency-domain* product
+feeding the IFFT already matched MATLAB to floating-point precision
+(`test_uneq_h_vs_matlab_c2c.py`) — meaning the gap was in the IFFT/pulse-
+shaping step itself, not in any stage's own formula.
 
-- The S-parameter extrapolation-range/method hypothesis (serdeskit
-  edge-pads past 60 GHz measured data out to the grid's Nyquist;
-  MATLAB's `interp_Sparam` uses `'linear_trend_to_DC'`/
-  `'extrap_cubic_to_dc_linear_to_inf'`) — still just a hypothesis.
-- MATLAB's own composition is a **time-domain chain** (IFFT the raw
-  channel+package+RxAFE response once, then `TD_CTLE` — a time-domain
-  bilinear-transform IIR filter, `com_ieee8023_93a_370.m:2228` — then
-  `FFE.m`'s circular-shift-sum), not a single frequency-domain multiply
-  + one IFFT like `ffe_channel_ctle_pulse_response()`. Mathematically
-  equivalent for an LTI chain, but IIR-filtering a necessarily-truncated
-  time-domain signal and multiplying continuous frequency responses
-  aren't guaranteed to agree at this level if either side's truncation/
-  windowing is more aggressive than assumed.
-- `TapWeightRxFfe`'s known, separate, *unrelated* delay-convention bug
-  (previous entry, above) does not explain this: this config's Rx FFE is
-  a single unity tap, where that convention is moot.
+Root cause: `SystemGrid.pulse_response()` does one IFFT over the whole
+periodic record (`x_sinc(f) * H(f)`, then IFFT). MATLAB's
+`s21_to_impulse_DC` (`com_ieee8023_93a_370.m:9895-9964`) does something
+structurally different: IFFT to an impulse response, **truncate** once
+its magnitude decays below `OP.impulse_response_truncation_threshold`
+(default `1e-3` of peak, confirmed this config doesn't override it), and
+only *then* box-car-integrate into a pulse response — via `filter()`, a
+linear (causal, non-circular) FIR, not a circular convolution, since the
+truncated array is no longer the periodic record `pulse_response()`
+assumes.
 
-**Next step, if picked up**: same isolation approach that found `H_t` —
-compare `chdata(1).ctle_imp_response` (post-CTLE, pre-FFE) against
-serdeskit's own channel*tx_filter*ctle*rx_afe composition, IFFT'd, to
-check whether the residual is already present before FFE, or introduced
-by FFE's own time-domain-vs-frequency-domain composition difference.
+**Fixed** by adding `SystemGrid.truncated_pulse_response()`
+(`src/serdeskit/link/system_grid.py`) — replicates MATLAB's IFFT-then-
+truncate-then-linear-box-car exactly — and switching
+`Link.uneq_pulse_response()` to use it instead of `pulse_response()`.
+Deliberately a *new* method, not a change to `pulse_response()` itself:
+`pulse_response()` is depended on by most of this project's test suite,
+including several bit-exact (`atol=1e-15`) PyChOpMarg comparisons that
+don't do this truncation, so changing it in place would have risked
+regressing already-verified behavior for no reason — this is scoped to
+exactly the one caller currently being investigated.
 
-**Next step, if picked up**: isolate which stage introduces the gap by
-comparing intermediate quantities the same way, one stage earlier each
-time — e.g. capture `chdata(1).uneq_pulse_response` (channel+package+
-RxAFE, pre-CTLE) via the same `OP.BREAD_CRUMBS`/`fom_result` route (or a
-dedicated `chdata` capture) and compare against
-`link.channel.transfer_function(grid.f) * rx_afe.transfer_function(grid.f)`,
-IFFT'd — narrows the search to "channel+package+RxAFE" vs. "CTLE" vs.
-"FFE" before chasing the S-parameter-extrapolation hypothesis further.
+Result: `tests/link/test_uneq_pulse_response_vs_matlab_c2c.py`'s shape
+test now passes at **0/321 mismatched**, peak indices align exactly
+(0 samples apart, vs. 15 before), peak value within 0.0004%, worst point
+in the window within 0.0006% of peak — floating-point-level agreement.
+
+**Not yet done**: `ffe_channel_ctle_pulse_response()` (the full composed
+pulse response, `tests/link/test_pulse_response_vs_matlab_c2c.py`) still
+uses the untouched `pulse_response()` and still fails at its original
+~1-2% residual — this fix only closed the gap for the pre-CTLE/FFE
+portion. Given how completely it closed *that* gap, the same
+truncate-then-time-domain-chain treatment extended through CTLE (`TD_
+CTLE`) and FFE (`FFE.m`'s circular-shift-sum, no longer circular once the
+record isn't periodic) is now the clear next step, not just one
+candidate among several.

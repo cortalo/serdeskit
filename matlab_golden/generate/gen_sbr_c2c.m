@@ -133,3 +133,21 @@ for i = 1:length(c.sdd21)
 end
 fclose(fid);
 fprintf('wrote uneq_h_c2c_thru.csv (%d points)\n', length(c.sdd21));
+
+% Time-domain counterpart: chdata(1).uneq_pulse_response
+% (com_ieee8023_93a_370.m:930, `filter(ones(1,samples_per_ui),1,
+% uneq_imp_response)`) -- the box-car integration of the impulse response
+% into a pulse response, same semantics as SystemGrid.pulse_response()'s
+% own x_sinc-multiply-then-IFFT (both are (93A-24)'s pulse-shaping step,
+% just done in different domains). This, not uneq_imp_response, is what
+% Link.uneq_pulse_response() is directly comparable to. Same time axis as
+% uneq_imp_response (c.t, set alongside it at :917) -- filter() doesn't
+% change array length. Already includes the victim launch amplitude
+% (c.A, baked into uneq_imp_response at :919 before the box-car runs).
+fid = fopen(fullfile(out_dir, 'uneq_pulse_response_c2c_thru.csv'), 'w');
+fprintf(fid, 't,pulse\n');
+for i = 1:length(c.uneq_pulse_response)
+    fprintf(fid, '%.10g,%.10g\n', c.t(i), c.uneq_pulse_response(i));
+end
+fclose(fid);
+fprintf('wrote uneq_pulse_response_c2c_thru.csv (%d points)\n', length(c.uneq_pulse_response));
