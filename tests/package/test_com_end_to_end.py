@@ -23,24 +23,12 @@ import pychopmarg.utility.filter
 import pychopmarg.utility.sparams
 import pytest
 import skrf
-
-pytest.skip(
-    "references the removed Com/ComParams API (now compute()/LinkComParams) -- needs updating",
-    allow_module_level=True,
-)
-
 from pychopmarg.com import COM
 from pychopmarg.common import OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
 
-from serdeskit.channel import SParameterChannel
-from serdeskit.com import Com, ComParams
-from serdeskit.ctle import TwoStageCtle
-from serdeskit.ffe import TapWeightFfe
-from serdeskit.link import Link
-from serdeskit.package import Package, cascade_channel
-from serdeskit.rx_afe import RxAfeButterworth
-from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.com import LinkComParams, compute
+from serdeskit.package import Package
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -190,36 +178,55 @@ def _build_reference() -> Reference:
     )
 
 
-def _raw_channel_differential(path: Path) -> skrf.Network:
-    """Same recipe test_cascade.py's own helper uses — see its docstring."""
-    network = skrf.Network(str(path)).copy()
-    network.renumber([0, 1, 2, 3], [0, 2, 1, 3])
-    network.se2gmm(p=2)
-    return network.subnetwork([0, 1])
-
-
-def _build_com(ref: Reference) -> Com:
+def _params(ref: Reference) -> LinkComParams:
+    """compute() builds the differential network and cascades the package
+    itself (same recipe `_raw_channel_differential` + `cascade_channel`
+    used to do by hand: renumber to (TX+,TX-,RX+,RX-), se2gmm, subnetwork,
+    then cascade -- `port_order=(0,2,1,3)` is that same renumbering), so
+    this only needs to flatten `ref.tx_package`/`ref.rx_package`'s own
+    fields into LinkComParams' tx_/rx_ ones.
+    """
     zero, pole1, pole2, shelf = ref.ctle_freqs
-    channel_network = cascade_channel(
-        _raw_channel_differential(ref.channel_path), ref.tx_package, ref.rx_package, ref.freqs,
-    )
-    link = Link(
-        channel=SParameterChannel(channel_network),  # R_d == R_0 here, so gamma1/gamma2 default to 0
-        ctle=TwoStageCtle(
-            zero_freq=zero,
-            pole1_freq=pole1,
-            pole2_freq=pole2,
-            shelf_freq=shelf,
-            dc_gain_db=G_DC,
-            shelf_gain_db=G_DC2,
-        ),
-        ffe=TapWeightFfe(
-            tap_weights=ref.tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / ref.baud_rate,
-        ),
-        rx_afe=RxAfeButterworth(cutoff_freq=ref.afe_cutoff),
-        rx_ffe=TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=1.0 / ref.baud_rate),
-    )
-    params = ComParams(
+    tx, rx = ref.tx_package, ref.rx_package
+    return LinkComParams(
+        channel_path=str(ref.channel_path),
+        next_channel_paths=(),
+        fext_channel_paths=(),
+        port_order=(0, 2, 1, 3),
+        gamma1=0.0,  # R_d == R_0 here
+        gamma2=0.0,
+        tx_r0=tx.r0,
+        tx_die_capacitances=tx.die_capacitances,
+        tx_die_inductances=tx.die_inductances,
+        tx_bump_capacitance=tx.bump_capacitance,
+        tx_tline_a1=tx.tline_a1,
+        tx_tline_a2=tx.tline_a2,
+        tx_tline_tau=tx.tline_tau,
+        tx_tline_gamma0=tx.tline_gamma0,
+        tx_tline_segments=tx.tline_segments,
+        tx_pad_capacitance=tx.pad_capacitance,
+        rx_r0=rx.r0,
+        rx_die_capacitances=rx.die_capacitances,
+        rx_die_inductances=rx.die_inductances,
+        rx_bump_capacitance=rx.bump_capacitance,
+        rx_tline_a1=rx.tline_a1,
+        rx_tline_a2=rx.tline_a2,
+        rx_tline_tau=rx.tline_tau,
+        rx_tline_gamma0=rx.tline_gamma0,
+        rx_tline_segments=rx.tline_segments,
+        rx_pad_capacitance=rx.pad_capacitance,
+        ctle_zero_freq=zero,
+        ctle_pole1_freq=pole1,
+        ctle_pole2_freq=pole2,
+        ctle_shelf_freq=shelf,
+        ctle_dc_gain_db=G_DC,
+        ctle_shelf_gain_db=G_DC2,
+        ffe_tap_weights=ref.tx_taps,
+        ffe_n_post=N_TX_POST_TAPS,
+        tx_risetime=0.0,
+        rx_afe_cutoff_freq=ref.afe_cutoff,
+        rx_ffe_tap_weights=np.array([1.0]),
+        rx_ffe_n_pre=0,
         baud_rate=ref.baud_rate,
         freq_step=ref.freq_step,
         samples_per_ui=ref.samples_per_ui,
@@ -236,7 +243,6 @@ def _build_com(ref: Reference) -> Com:
         dfe_min=ref.dfe_min,
         dfe_max=ref.dfe_max,
     )
-    return Com(link=link, params=params)
 
 
 @pytest.mark.skip(
@@ -246,7 +252,7 @@ def _build_com(ref: Reference) -> Com:
 )
 @pytest.mark.rx_tline_segments
 def test_com_matches_pychopmarg_with_package_modeling(reference: Reference) -> None:
-    result = _build_com(reference).compute()
+    result = compute(_params(reference))
 
     assert result.com_db == pytest.approx(reference.com_db, rel=1e-9)
     assert result.signal_amplitude == pytest.approx(reference.signal_amplitude, rel=1e-9)
