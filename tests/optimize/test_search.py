@@ -16,23 +16,14 @@ import pychopmarg.com
 import pychopmarg.utility.filter
 import pytest
 import skrf
-
-pytest.skip(
-    "references the removed ComParams/EqualizationSearch API (now LinkComParams/search()) -- needs updating",
-    allow_module_level=True,
-)
-
 from pychopmarg.com import COM
 from pychopmarg.common import OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
 from pychopmarg.utility.filter import calc_H21
 from pychopmarg.utility.sparams import sdd_21
 
-from serdeskit.channel import SParameterChannel
-from serdeskit.com import ComParams
-from serdeskit.optimize import EqualizationSearch
-from serdeskit.rx_afe import RxAfeButterworth
-from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.com import LinkComParams
+from serdeskit.optimize import ComStandard, search
 
 
 @dataclass(frozen=True)
@@ -145,9 +136,16 @@ def setup() -> Iterator[Setup]:
         yield Setup(com=com, thru_path=thru_path, next_paths=[next1_path, next2_path], fext_path=fext_path)
 
 
-def _params(setup: Setup) -> ComParams:
+def _standard(setup: Setup) -> ComStandard:
+    """No package model -- matches this test's own package-free channels
+    (`_no_pkg_chnl`). `search()` always cascades a package, same as
+    `compute()`; see `tests/com/test_com.py`'s own `_params` docstring
+    for why a degenerate (zero capacitance/inductance, zero-length
+    matched-impedance line) Package is the closest equivalent.
+    """
     cfg = setup.com.com_params
-    return ComParams(
+    r0 = 50.0
+    return ComStandard(
         baud_rate=float(cfg.fb) * 1e9,
         freq_step=float(cfg.fstep) * 1e9,
         samples_per_ui=int(cfg.M),
@@ -163,27 +161,50 @@ def _params(setup: Setup) -> ComParams:
         der_0=float(cfg.DER_0),
         dfe_min=np.asarray(cfg.dfe_min, dtype=np.float64),
         dfe_max=np.asarray(cfg.dfe_max, dtype=np.float64),
+        ctle_zero_freq=float(cfg.f_z) * 1e9,
+        ctle_pole1_freq=float(cfg.f_p1) * 1e9,
+        ctle_pole2_freq=float(cfg.f_p2) * 1e9,
+        ctle_shelf_freq=float(cfg.f_LF) * 1e9,
+        ctle_dc_gain_candidates=DC_GAIN_CANDIDATES,
+        ctle_shelf_gain_candidates=SHELF_GAIN_CANDIDATES,
+        tx_taps_bounds=TX_TAPS_BOUNDS,
+        tx_taps_c0_min=C0_MIN,
+        tx_taps_n_post=N_POST,
+        tx_risetime=0.0,
+        rx_afe_cutoff_freq=float(cfg.f_r) * float(cfg.fb) * 1e9,
+        r0=r0,
+        tx_termination_resistance=r0,  # matched, gamma1=gamma2=0
+        rx_termination_resistance=r0,
+        tx_die_capacitances=[0.0],
+        tx_die_inductances=[0.0],
+        tx_bump_capacitance=0.0,
+        tx_pad_capacitance=0.0,
+        tx_tline_a1=0.0,
+        tx_tline_a2=0.0,
+        tx_tline_tau=0.0,
+        tx_tline_gamma0=0.0,
+        tx_tline_segments=[(2 * r0, 0.0)],
+        rx_die_capacitances=[0.0],
+        rx_die_inductances=[0.0],
+        rx_bump_capacitance=0.0,
+        rx_pad_capacitance=0.0,
+        rx_tline_a1=0.0,
+        rx_tline_a2=0.0,
+        rx_tline_tau=0.0,
+        rx_tline_gamma0=0.0,
+        rx_tline_segments=[(2 * r0, 0.0)],
+        com_min_db=0.0,  # unused by search() itself
     )
 
 
-def _search(setup: Setup) -> EqualizationSearch:
-    cfg = setup.com.com_params
-    return EqualizationSearch(
-        channel=SParameterChannel.from_touchstone(str(setup.thru_path)),
-        rx_afe=RxAfeButterworth(cutoff_freq=float(cfg.f_r) * float(cfg.fb) * 1e9),
-        rx_ffe=TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=1.0 / (float(cfg.fb) * 1e9)),
-        zero_freq=float(cfg.f_z) * 1e9,
-        pole1_freq=float(cfg.f_p1) * 1e9,
-        pole2_freq=float(cfg.f_p2) * 1e9,
-        shelf_freq=float(cfg.f_LF) * 1e9,
-        dc_gain_candidates=DC_GAIN_CANDIDATES,
-        shelf_gain_candidates=SHELF_GAIN_CANDIDATES,
-        tx_taps_bounds=TX_TAPS_BOUNDS,
-        c0_min=C0_MIN,
-        n_post=N_POST,
-        params=_params(setup),
-        next_channels=[SParameterChannel.from_touchstone(str(p)) for p in setup.next_paths],
-        fext_channels=[SParameterChannel.from_touchstone(str(setup.fext_path))],
+def _search_result(setup: Setup) -> LinkComParams:
+    return search(
+        _standard(setup),
+        thru_path=str(setup.thru_path),
+        next_paths=[str(p) for p in setup.next_paths],
+        fext_paths=[str(setup.fext_path)],
+        port_order=(0, 2, 1, 3),
+        show_progress=False,
     )
 
 
@@ -226,11 +247,12 @@ def _pychopmarg_search(com: COM) -> tuple[npt.NDArray[np.float64], float, float,
 )
 @pytest.mark.ffe_cursor_referenced_delay
 def test_matches_pychopmargs_own_opt_eq(setup: Setup) -> None:
-    result = _search(setup).search()
+    result = _search_result(setup)
 
-    expected_taps, expected_dc_gain, expected_shelf_gain, expected_fom = _pychopmarg_search(setup.com)
+    expected_taps, expected_dc_gain, expected_shelf_gain, _expected_fom = _pychopmarg_search(setup.com)
 
-    np.testing.assert_allclose(result.tx_taps, expected_taps, atol=1e-12)
-    assert result.dc_gain_db == pytest.approx(expected_dc_gain)
-    assert result.shelf_gain_db == pytest.approx(expected_shelf_gain)
-    assert result.fom == pytest.approx(expected_fom, rel=1e-9)
+    np.testing.assert_allclose(result.ffe_tap_weights, expected_taps, atol=1e-12)
+    assert result.ctle_dc_gain_db == pytest.approx(expected_dc_gain)
+    assert result.ctle_shelf_gain_db == pytest.approx(expected_shelf_gain)
+    # search() returns the winning LinkComParams, not a FOM value -- the
+    # tap/gain comparisons above are what this test actually checks.

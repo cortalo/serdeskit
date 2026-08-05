@@ -26,12 +26,6 @@ import pychopmarg.com
 import pychopmarg.utility.filter
 import pytest
 import skrf
-
-pytest.skip(
-    "references the removed ComParams API (now compute()/LinkComParams/ComStandard) -- needs updating",
-    allow_module_level=True,
-)
-
 from pychopmarg.com import COM
 from pychopmarg.common import OptMode
 from pychopmarg.config.ieee_8023dj import IEEE_8023dj
@@ -39,15 +33,15 @@ from pychopmarg.utility.filter import calc_H21
 from pychopmarg.utility.sparams import sdd_21
 
 from serdeskit.channel import SParameterChannel
-from serdeskit.com import ComParams
 from serdeskit.common.types import Signal
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Link, SystemGrid
-from serdeskit.optimize import figure_of_merit
+from serdeskit.optimize import ComStandard, figure_of_merit
 from serdeskit.pulse_response import PulseResponse
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -183,14 +177,25 @@ def _link(setup: Setup, path: Path, flat_tx: bool = False) -> Link:
             shelf_gain_db=G_DC2,
         ),
         ffe=TapWeightFfe(tap_weights=tx_taps, n_post=n_post, tap_delay=1.0 / baud_rate),
+        # Identity -- matches PyChOpMarg's own H(), no Tx risetime factor.
+        # sbr_pulse_response() (unlike the removed ffe_channel_ctle_
+        # pulse_response()) requires one to be set at all.
+        tx_filter=TxRisetimeFilter(risetime=0.0),
         rx_afe=RxAfeButterworth(cutoff_freq=float(cfg.f_r) * baud_rate),
         rx_ffe=TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=1.0 / baud_rate),
     )
 
 
-def _params(setup: Setup) -> ComParams:
+def _standard(setup: Setup) -> ComStandard:
+    """Only the numeric fields figure_of_merit() itself reads
+    (rlm/levels/snr_tx/dfe_min/dfe_max/a_dd/sigma_rj/eta_0/freq_step/
+    samples_per_ui) matter here; the rest (package model, search grids)
+    are placeholders -- this test never calls search(), only
+    figure_of_merit() directly.
+    """
     cfg = setup.com.com_params
-    return ComParams(
+    r0 = 50.0
+    return ComStandard(
         baud_rate=float(cfg.fb) * 1e9,
         freq_step=float(cfg.fstep) * 1e9,
         samples_per_ui=int(cfg.M),
@@ -206,10 +211,43 @@ def _params(setup: Setup) -> ComParams:
         der_0=float(cfg.DER_0),
         dfe_min=np.asarray(cfg.dfe_min, dtype=np.float64),
         dfe_max=np.asarray(cfg.dfe_max, dtype=np.float64),
+        ctle_zero_freq=float(cfg.f_z) * 1e9,
+        ctle_pole1_freq=float(cfg.f_p1) * 1e9,
+        ctle_pole2_freq=float(cfg.f_p2) * 1e9,
+        ctle_shelf_freq=float(cfg.f_LF) * 1e9,
+        ctle_dc_gain_candidates=[G_DC],
+        ctle_shelf_gain_candidates=[G_DC2],
+        tx_taps_bounds=[(0.0, 0.0, 0.0)] * len(cfg.tx_taps_min),
+        tx_taps_c0_min=0.0,
+        tx_taps_n_post=N_TX_POST_TAPS,
+        tx_risetime=0.0,
+        rx_afe_cutoff_freq=float(cfg.f_r) * float(cfg.fb) * 1e9,
+        r0=r0,
+        tx_termination_resistance=r0,
+        rx_termination_resistance=r0,
+        tx_die_capacitances=[0.0],
+        tx_die_inductances=[0.0],
+        tx_bump_capacitance=0.0,
+        tx_pad_capacitance=0.0,
+        tx_tline_a1=0.0,
+        tx_tline_a2=0.0,
+        tx_tline_tau=0.0,
+        tx_tline_gamma0=0.0,
+        tx_tline_segments=[(2 * r0, 0.0)],
+        rx_die_capacitances=[0.0],
+        rx_die_inductances=[0.0],
+        rx_bump_capacitance=0.0,
+        rx_pad_capacitance=0.0,
+        rx_tline_a1=0.0,
+        rx_tline_a2=0.0,
+        rx_tline_tau=0.0,
+        rx_tline_gamma0=0.0,
+        rx_tline_segments=[(2 * r0, 0.0)],
+        com_min_db=0.0,
     )
 
 
-def _delay_convention_shift(setup: Setup, p: ComParams) -> int:
+def _delay_convention_shift(setup: Setup, p: ComStandard) -> int:
     """TapWeightFfe references delay 0 at the *cursor* tap (matching MATLAB
     COM3.70's own FFE — see tests/ffe/test_tap_weight_vs_matlab.py), while
     PyChOpMarg's calc_fom (via its own Hffe convention) references delay 0
@@ -225,12 +263,12 @@ def _delay_convention_shift(setup: Setup, p: ComParams) -> int:
 
 
 def _figure_of_merit(setup: Setup) -> float:
-    p = _params(setup)
+    p = _standard(setup)
     grid = SystemGrid.build(p.baud_rate, p.freq_step, p.samples_per_ui)
     shift = _delay_convention_shift(setup, p)
 
     victim_link = _link(setup, setup.thru_path)
-    signal = victim_link.ffe_channel_ctle_pulse_response(grid).scale(p.victim_amplitude)
+    signal = victim_link.sbr_pulse_response(grid).scale(p.victim_amplitude)
     signal = Signal(samples=np.roll(signal.samples, shift), fs=signal.fs, t0=signal.t0)
     pulse_response = PulseResponse.from_signal(
         signal, ui=1.0 / p.baud_rate, dfe1_max=float(p.dfe_max[0]), dfe1_min=float(p.dfe_min[0]),
@@ -241,7 +279,7 @@ def _figure_of_merit(setup: Setup) -> float:
     ]
     aggressor_pulse_responses = [
         np.roll(
-            _link(setup, path, flat_tx=flat_tx).ffe_channel_ctle_pulse_response(grid).scale(amplitude).samples,
+            _link(setup, path, flat_tx=flat_tx).sbr_pulse_response(grid).scale(amplitude).samples,
             shift,
         )
         for path, amplitude, flat_tx in aggressor_paths_amplitudes_and_flatness
@@ -256,11 +294,16 @@ def _figure_of_merit(setup: Setup) -> float:
 
 @pytest.mark.skip(
     reason=(
-        "_link()/_figure_of_merit() build Link without a tx_filter -- "
-        "ffe_channel_ctle_pulse_response() now requires one (TxRisetimeFilter, "
-        "wired in to match MATLAB's real H_t behavior), so this raises "
-        "AttributeError. Search/optimization-level MATLAB alignment is "
-        "explicitly out of scope for now (CLAUDE.md). See docs/known-issues.md."
+        "_link()/_figure_of_merit() now build a real, identity tx_filter and "
+        "call sbr_pulse_response() (the removed ffe_channel_ctle_pulse_response()'s "
+        "replacement) so this collects/type-checks, but the comparison itself "
+        "remains out of scope: sbr_pulse_response() composes CTLE/FFE in the "
+        "time domain (truncate, TD_CTLE, box-car, FFE.m), not the frequency-"
+        "domain circular composition ffe_channel_ctle_pulse_response() used, so "
+        "_delay_convention_shift()'s np.roll-based linear-phase compensation "
+        "(valid for a periodic IFFT'd array) doesn't cleanly apply to its "
+        "truncated, non-periodic output either. Search/optimization-level "
+        "MATLAB alignment is explicitly out of scope for now (CLAUDE.md)."
     )
 )
 @pytest.mark.tx_filter_unwired_in_search
