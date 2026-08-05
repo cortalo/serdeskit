@@ -25,6 +25,7 @@ import skrf
 
 from serdeskit.channel import SParameterChannel, differential_network
 from serdeskit.com.params import LinkComParams
+from serdeskit.common.types import Signal
 from serdeskit.crosstalk import worst_case_phase_samples
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
@@ -65,6 +66,7 @@ class ComResult:
     sigma_crosstalk: float  # sqrt(varXT): the combined crosstalk PMF's own variance, sum(y^2 * p)
     voltage_grid: npt.NDArray[np.float64]  # y (V) the PMFs below are on
     noise_pmf: npt.NDArray[np.float64]  # the combined interference+noise PMF, (93A-45)
+    half_signal_unequalized_pulse_response: Signal
 
 
 def compute(params: LinkComParams) -> ComResult:
@@ -211,6 +213,9 @@ def compute(params: LinkComParams) -> ComResult:
         sigma_crosstalk=float(np.sqrt(var_crosstalk)),
         voltage_grid=y,
         noise_pmf=p_total,
+        half_signal_unequalized_pulse_response=link.half_symbol_unequalized_pulse_response(
+            grid, params.levels
+        ).scale(params.victim_amplitude),
     )
 
 

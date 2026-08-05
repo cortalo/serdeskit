@@ -96,14 +96,9 @@ class LinkResult:
     eye: EyeData
 
 
-def _uneq_truncated_impulse_response(
+def uneq_truncated_impulse_response(
     channel: Channel, tx_filter: TxFilter, rx_afe: RxAfe, grid: SystemGrid
 ) -> Signal:
-    """`channel + tx_filter + rx_afe`, truncated impulse response --
-    `sbr_pulse_response()`'s own first step, factored out since CTLE's own
-    time-domain path (`Ctle.process()`) needs this impulse response before
-    `box_car_integrate()` turns it into a pulse response.
-    """
     h = channel.transfer_function(grid.f) * tx_filter.transfer_function(grid.f) * rx_afe.transfer_function(grid.f)
     return grid.truncated_impulse_response(h)
 
@@ -161,13 +156,21 @@ class Link:
         """
         # self.tx_filter/self.rx_afe are Optional; a genuine caller error at
         # runtime if unset (AttributeError on None), same as the others below.
-        impulse = _uneq_truncated_impulse_response(
+        impulse = uneq_truncated_impulse_response(
             self.channel, self.tx_filter, self.rx_afe, grid  # type: ignore[arg-type]
         )
         ctle_impulse = self.ctle.process(impulse)  # type: ignore[union-attr]
         pulse = grid.box_car_integrate(ctle_impulse)
         eq_pulse = self.ffe.process(pulse)  # type: ignore[union-attr]
         return self.rx_ffe.process(eq_pulse)  # type: ignore[union-attr]
+
+    def half_symbol_unequalized_pulse_response(self, grid: SystemGrid, level: int) -> Signal:
+        impulse = uneq_truncated_impulse_response(
+            self.channel, self.tx_filter, self.rx_afe, grid  # type: ignore[arg-type]
+        )
+        pulse = grid.box_car_integrate(impulse)
+        return pulse.scale(1/(level - 1))
+
 
 
 def _upsample_bits(bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> npt.NDArray[np.float64]:

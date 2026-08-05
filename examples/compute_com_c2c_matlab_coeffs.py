@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from serdeskit.com import LinkComParams, compute
@@ -160,6 +161,17 @@ def main() -> None:
     print(f"sigma_Noise:       {result.sigma_noise * 1e3:.3f} mV")
     print(f"sigma_ISI:         {result.sigma_isi * 1e3:.3f} mV")
     print(f"sigma_Crosstalk:   {result.sigma_crosstalk * 1e3:.3f} mV")
+
+    signal = result.half_signal_unequalized_pulse_response
+    t = signal.t0 + np.arange(len(signal.samples)) / signal.fs
+    plt.plot(t, signal.samples, label="Half Symbol Unequalized end-to-end PR")
+    plt.xlabel("seconds")
+    plt.ylabel("volts")
+    plt.title("C2C thru, MATLAB coeffs")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
