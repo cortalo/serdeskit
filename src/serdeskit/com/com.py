@@ -195,6 +195,7 @@ class Com:
                 channel=channel,
                 ctle=self.link.ctle,
                 ffe=flat_ffe,
+                tx_filter=self.link.tx_filter,
                 rx_afe=self.link.rx_afe,
                 rx_ffe=self.link.rx_ffe,
             )
@@ -207,6 +208,7 @@ class Com:
                 channel=channel,
                 ctle=self.link.ctle,
                 ffe=self.link.ffe,
+                tx_filter=self.link.tx_filter,
                 rx_afe=self.link.rx_afe,
                 rx_ffe=self.link.rx_ffe,
             )

@@ -30,6 +30,7 @@ from serdeskit.link import Link, SystemGrid
 from serdeskit.package import Package, cascade_channel
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 DATA = Path("../tests/data/pychopmarg_example2")
 
@@ -91,10 +92,14 @@ def main() -> None:
     # [0,0,0,0,0,0] / [0,0,0.02,0.02,0,0]); -0.12 = -0.38 + 13*0.02 — an
     # arbitrary, valid combination (no search — see module docstring).
     ffe = TapWeightFfe(tap_weights=np.array([0.0, 0.0, -0.18, -0.12, 0.0, 0.0]), n_post=3, tap_delay=tap_delay)
+    # Identity -- this config has no verified real Tr, and this example's
+    # own docstring says it matches tests/evaluate/test_pychopmarg_example2.py's
+    # PyChOpMarg comparison, whose own H() has no Tx risetime factor.
+    tx_filter = TxRisetimeFilter(risetime=0.0)
     rx_afe = RxAfeButterworth(cutoff_freq=0.75 * BAUD_RATE)
     rx_ffe = TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=tap_delay)
 
-    link = Link(channel=channel, ctle=ctle, ffe=ffe, rx_afe=rx_afe, rx_ffe=rx_ffe)
+    link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
     params = ComParams(
         baud_rate=BAUD_RATE,
         freq_step=FREQ_STEP,

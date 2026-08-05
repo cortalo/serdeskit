@@ -37,6 +37,7 @@ from serdeskit.link import Link
 from serdeskit.package import Package, cascade_channel
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -259,6 +260,9 @@ def _build_com(ref: Reference) -> Com:
         ffe=TapWeightFfe(
             tap_weights=ref.tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / ref.baud_rate,
         ),
+        # Identity -- matches PyChOpMarg's own H() (Htx * H21 * Hr * Hctf *
+        # ...), which has no Tx risetime/transition-time factor at all.
+        tx_filter=TxRisetimeFilter(risetime=0.0),
         rx_afe=RxAfeButterworth(cutoff_freq=ref.afe_cutoff),
         rx_ffe=TapWeightRxFfe(tap_weights=ref.rx_taps, tap_delay=1.0 / ref.baud_rate),
     )

@@ -48,6 +48,7 @@ from serdeskit.link import Link, SystemGrid
 from serdeskit.package import Package, cascade_channel
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -126,10 +127,11 @@ def main() -> None:
         shelf_gain_db=-2.0,
     )
     ffe = TapWeightFfe(tap_weights=np.array([-0.02, 0.06, -0.2, -0.04]), n_post=1, tap_delay=tap_delay)
+    tx_filter = TxRisetimeFilter(risetime=0.0075e-9)  # this config's own T_r -- see matlab_golden/generate/gen_tx_h_t.m
     rx_afe = RxAfeButterworth(cutoff_freq=0.75 * BAUD_RATE)
     rx_ffe = TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=tap_delay)
 
-    link = Link(channel=channel, ctle=ctle, ffe=ffe, rx_afe=rx_afe, rx_ffe=rx_ffe)
+    link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
     params = ComParams(
         baud_rate=BAUD_RATE,
         freq_step=FREQ_STEP,

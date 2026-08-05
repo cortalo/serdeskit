@@ -257,3 +257,134 @@ regardless of the FFE convention change. Left unresolved for now — needs
 its own decision (build a delay margin into `Link`/`SystemGrid`, or make
 `PulseResponse.from_signal`'s window wrap circularly) before re-enabling
 this test.
+
+## `TapWeightRxFfe` likely needs the same cursor-referenced fix as Tx FFE
+
+Status: found while investigating what's next to verify against MATLAB
+after the Tx FFE fix above; not yet confirmed with a `matlab_golden` test,
+not yet fixed.
+
+`TapWeightRxFfe.transfer_function()` (`src/serdeskit/rx_ffe/tap_weight.py`)
+is first-tap-referenced (`delays = np.arange(len(tap_weights))`) — by its
+own docstring, deliberately built to match PyChOpMarg's `Hffe_Rx`, not
+independently checked against MATLAB.
+
+MATLAB's real Rx FFE *signal-path* application reuses the exact same
+`FFE.m` primitive as the Tx side (`Vfiltered = FFE(Cmod, param.RxFFE_cmx,
+spui, V)`, line 3850) — the same function `matlab_golden/lib/FFE.m` was
+extracted from for the Tx FFE golden test above, and thus the same
+cursor-referenced convention (delay 0 at the cursor tap, `RxFFE_cmx`
+precursor taps at negative delay). If so, `TapWeightRxFfe` has the exact
+same bug `TapWeightFfe` did before this file's Tx FFE section — just
+never surfaced, because every config this project has exercised uses Rx
+FFE as a single unity tap, where the convention is moot (a 1-tap array
+has no reference point to disagree about).
+
+Separately, MATLAB also computes a frequency-domain `H_Rx_FFE` used only
+for the receiver-noise term (`sigma_N`, around 93A-35) via `exp(-1j*2*pi*
+(ii+1)*f/param.fb)` — an apparent extra 1-UI offset (`ii+1`, not `ii`)
+relative to `FFE.m`'s own convention. Not yet investigated whether this
+is a genuine second, distinct convention (e.g. a real pipeline-latency
+term specific to the noise calc) or an artifact of how `phase_memory`'s
+columns are laid out; needs its own read of `phase_memory`'s construction
+and `RxFFE_cmx`/`RxFFE_cpx`/`force()`'s `t_s` sampling-point logic before
+concluding anything.
+
+**Next step, if picked up**: same recipe as the Tx FFE fix — extend
+`matlab_golden/generate/gen_ffe.m` (or add a sibling script) to call
+`FFE.m` with `cmx > 0`, write a golden CSV, add `tests/rx_ffe/
+test_tap_weight_vs_matlab.py` asserting direct agreement (TDD: should
+fail first against the current first-tap-referenced implementation),
+then fix `TapWeightRxFfe.transfer_function()`'s `delays` the same way
+`TapWeightFfe.transfer_function()`'s were fixed.
+
+## Full composed pulse response vs. MATLAB's `best_sbr`: root cause found and fixed (missing Tx risetime filter), ~1-2% residual remains
+
+Status: root cause confirmed and fixed. A small residual gap remains,
+not yet root-caused.
+
+**Root cause**: `Link.ffe_channel_ctle_pulse_response()` composed
+channel + CTLE + Tx FFE + Rx AFE + Rx FFE, but omitted the transmitter's
+finite-risetime filter entirely — the method's own docstring used to
+claim "(93A-19) says it has no role in the pulse response". That
+assumption was wrong. MATLAB COM3.70's own `s21_pkg_tester`
+(`com_ieee8023_93a_370.m:9839-9856`) bakes a risetime filter `H_t` into
+every `chdata(i).sdd21` whenever `OP.FORCE_TR` is set (its own comment:
+"should be set to 1 in most later config sheets" — not a rare case), and
+this project's real C2C config does set it. Confirmed two ways: (1)
+dividing a live run's captured `chdata(1).sdd21`
+(`matlab_golden/data/uneq_h_c2c_thru.csv`) by the already-verified
+channel+package+Butterworth product matched the theoretical `H_t`
+formula to 5.3e-10; (2) a proper standalone `matlab_golden` extraction
+(`matlab_golden/lib/tx_transition_time_filter.m`, verbatim from
+`s21_pkg_tester`, no live COM run needed) golden-tests it directly
+(`tests/tx_filter/test_risetime_vs_matlab.py`).
+
+**Fixed**: `src/serdeskit/tx_filter/risetime.py`'s `TxRisetimeFilter`
+(pre-existing but never wired into `Link`, and itself missing a term)
+now implements the real formula —
+
+```
+H(f) = exp(-2*(pi*f*risetime/1.6832)^2) * exp(-1j*2*pi*f*risetime*3)
+```
+
+— the same Gaussian magnitude as the textbook 93A-46, plus a
+`exp(-1j*2*pi*f*risetime*3)` phase (a pure `3*risetime` delay) the old
+implementation didn't have. `Link` gained a `tx_filter` field (new
+`TxFilter` Protocol, `src/serdeskit/link/link.py`) and now includes it
+in `h`; `Com._next_links()`/`_fext_links()` propagate `self.link.
+tx_filter` to aggressor Links the same way they already do for
+`ctle`/`rx_afe`/`rx_ffe`. Every existing `Link(...)` call site needed a
+`tx_filter=...` update: this project's own real C2C config uses
+`TxRisetimeFilter(risetime=0.0075e-9)` (7.5 ps, this config's own `T_r`);
+every PyChOpMarg-comparison test/example uses `TxRisetimeFilter(risetime=0.0)`
+(the identity) — confirmed correct by checking PyChOpMarg's own `COM.H()`
+(`Htx * H21 * Hr * Hctf * ...`), which has no risetime factor at all, so
+matching it means applying none on this side either.
+
+Before the fix: cursor 70.63 mV (serdeskit) vs. 63.30 mV (MATLAB), a
++11.6% divergence, with 267/321 samples in a ±5 UI window exceeding
+`rtol=1e-3, atol=1e-4` (worst point 15% of cursor, RMS 4.7% of cursor).
+After: cursor 63.68 mV vs. 63.30 mV, **+0.6%**, 111/321 samples still
+outside tolerance (worst point ~2.0% of cursor, RMS 0.65% of cursor) —
+`tests/link/test_pulse_response_vs_matlab_c2c.py`'s two tests are left
+failing at their original tight tolerance rather than loosened, since
+this residual is real and not yet explained (see below), not something
+to paper over.
+
+**Residual, not yet root-caused** (this project's earlier "~2% off"
+informal estimate, from before this investigation, roughly matches this
+number — plausibly the same unexplained gap, not coincidence). Leading
+untested candidates:
+
+- The S-parameter extrapolation-range/method hypothesis (serdeskit
+  edge-pads past 60 GHz measured data out to the grid's Nyquist;
+  MATLAB's `interp_Sparam` uses `'linear_trend_to_DC'`/
+  `'extrap_cubic_to_dc_linear_to_inf'`) — still just a hypothesis.
+- MATLAB's own composition is a **time-domain chain** (IFFT the raw
+  channel+package+RxAFE response once, then `TD_CTLE` — a time-domain
+  bilinear-transform IIR filter, `com_ieee8023_93a_370.m:2228` — then
+  `FFE.m`'s circular-shift-sum), not a single frequency-domain multiply
+  + one IFFT like `ffe_channel_ctle_pulse_response()`. Mathematically
+  equivalent for an LTI chain, but IIR-filtering a necessarily-truncated
+  time-domain signal and multiplying continuous frequency responses
+  aren't guaranteed to agree at this level if either side's truncation/
+  windowing is more aggressive than assumed.
+- `TapWeightRxFfe`'s known, separate, *unrelated* delay-convention bug
+  (previous entry, above) does not explain this: this config's Rx FFE is
+  a single unity tap, where that convention is moot.
+
+**Next step, if picked up**: same isolation approach that found `H_t` —
+compare `chdata(1).ctle_imp_response` (post-CTLE, pre-FFE) against
+serdeskit's own channel*tx_filter*ctle*rx_afe composition, IFFT'd, to
+check whether the residual is already present before FFE, or introduced
+by FFE's own time-domain-vs-frequency-domain composition difference.
+
+**Next step, if picked up**: isolate which stage introduces the gap by
+comparing intermediate quantities the same way, one stage earlier each
+time — e.g. capture `chdata(1).uneq_pulse_response` (channel+package+
+RxAFE, pre-CTLE) via the same `OP.BREAD_CRUMBS`/`fom_result` route (or a
+dedicated `chdata` capture) and compare against
+`link.channel.transfer_function(grid.f) * rx_afe.transfer_function(grid.f)`,
+IFFT'd — narrows the search to "channel+package+RxAFE" vs. "CTLE" vs.
+"FFE" before chasing the S-parameter-extrapolation hypothesis further.

@@ -21,6 +21,7 @@ from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Link, SystemGrid
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 G_DC = -6.0
 G_DC2 = -2.0
@@ -133,6 +134,11 @@ def test_matches_pychopmarg_end_to_end(synthetic_s4p: Path) -> None:
         ffe=TapWeightFfe(
             tap_weights=tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / baud_rate
         ),
+        # risetime=0.0 is the identity (H(f)=1 exactly, no floating-point
+        # effect on the atol=1e-15 comparison below) -- matches PyChOpMarg's
+        # own H() (Htx * H21 * Hr * Hctf * ...), which has no Tx
+        # risetime/transition-time factor at all.
+        tx_filter=TxRisetimeFilter(risetime=0.0),
         rx_afe=RxAfeButterworth(cutoff_freq=cfg.f_r * baud_rate),
         # A single unity tap is the identity — matches this test's own
         # rx_taps=np.array([]) on the PyChOpMarg side (both mean "no Rx FFE").
@@ -211,6 +217,9 @@ def test_matches_pychopmarg_end_to_end_with_rx_ffe(
         ffe=TapWeightFfe(
             tap_weights=tx_taps, n_post=N_TX_POST_TAPS, tap_delay=1.0 / baud_rate
         ),
+        # See test_matches_pychopmarg_end_to_end's own comment: identity,
+        # matching PyChOpMarg's H() having no Tx risetime factor.
+        tx_filter=TxRisetimeFilter(risetime=0.0),
         rx_afe=RxAfeButterworth(cutoff_freq=cfg.f_r * baud_rate),
         rx_ffe=TapWeightRxFfe(tap_weights=rx_taps, tap_delay=1.0 / baud_rate),
     )

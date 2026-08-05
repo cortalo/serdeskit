@@ -45,6 +45,22 @@ class Ffe(Protocol):
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 
+class TxFilter(Protocol):
+    """What Link needs from a Tx-side filter — frequency-domain only, no
+    `process`. Concrete example: `tx_filter.TxRisetimeFilter`, the
+    transmitter output driver's finite risetime. Consumed by
+    `ffe_channel_ctle_pulse_response()`'s `h` composition, matching
+    MATLAB COM3.70's own real behavior (`s21_pkg_tester`'s `H_t`, gated
+    by `OP.FORCE_TR`/`T_r_filter_type` — confirmed against MATLAB,
+    `tests/tx_filter/test_risetime_vs_matlab.py`, docs/known-issues.md's
+    "full composed pulse response" entry) — this project previously
+    assumed, incorrectly, that a Tx risetime filter "has no role in the
+    pulse response".
+    """
+
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+
+
 class RxAfe(Protocol):
     """What Link needs from an Rx analog front-end — same situation as
     TxFilter, frequency-domain only.
@@ -79,12 +95,12 @@ class LinkResult:
 @dataclass
 class Link:
     """channel is the stage the bit-domain `simulate()` pipeline runs the
-    launched signal through. `ctle`/`ffe`/`rx_afe`/`rx_ffe` are only used
-    by `ffe_channel_ctle_pulse_response()`'s frequency-domain composition
-    — optional since `simulate()` doesn't need them; left unset and then
-    used there raises a plain AttributeError, which is fine (a caller
-    building a pulse response without equalization is a caller error, not
-    a case worth a defensive check).
+    launched signal through. `ctle`/`ffe`/`tx_filter`/`rx_afe`/`rx_ffe`
+    are only used by `ffe_channel_ctle_pulse_response()`'s frequency-
+    domain composition — optional since `simulate()` doesn't need them;
+    left unset and then used there raises a plain AttributeError, which
+    is fine (a caller building a pulse response without equalization is
+    a caller error, not a case worth a defensive check).
 
     A link with no real Rx FFE still needs an `rx_ffe` set: a single
     unity tap (`RxFfe` with one tap of weight 1.0) is the identity —
@@ -98,6 +114,7 @@ class Link:
     channel: Channel
     ctle: Ctle | None = None
     ffe: Ffe | None = None
+    tx_filter: TxFilter | None = None
     rx_afe: RxAfe | None = None
     rx_ffe: RxFfe | None = None
 
@@ -113,16 +130,23 @@ class Link:
         return LinkResult(eye=eye)
 
     def ffe_channel_ctle_pulse_response(self, grid: SystemGrid) -> Signal:
-        """(93A-19)/(93A-24) pulse response: composes channel's, ctle's,
-        ffe's, and rx_afe's transfer functions on a shared SystemGrid and
-        inverse-transforms the result into a Signal. Requires
-        `self.ctle`/`self.ffe`/`self.rx_afe` to be set (see the class
-        docstring for what happens if not).
+        """(93A-19)/(93A-24) pulse response: composes channel's, tx_filter's,
+        ctle's, ffe's, rx_afe's, and rx_ffe's transfer functions on a
+        shared SystemGrid and inverse-transforms the result into a
+        Signal. Requires `self.ctle`/`self.ffe`/`self.tx_filter`/
+        `self.rx_afe`/`self.rx_ffe` to be set (see the class docstring
+        for what happens if not).
 
-        No Tx risetime filter here despite composing "the whole path":
-        per (93A-19), it has no role in the pulse response — it only
-        shapes the transmitter noise PSD used in the noise calculation,
-        a separate concern from this method.
+        `tx_filter` (the Tx driver's finite risetime) is included here
+        despite this project previously assuming, per its reading of
+        (93A-19), that it "has no role in the pulse response — it only
+        shapes the transmitter noise PSD". That assumption was wrong:
+        MATLAB COM3.70's own real behavior bakes an equivalent factor
+        (`s21_pkg_tester`'s `H_t`) into the same `chdata(i).sdd21` this
+        method's `h` is meant to match, whenever `OP.FORCE_TR` is set —
+        confirmed against MATLAB, see docs/known-issues.md's "full
+        composed pulse response" entry and `tests/tx_filter/
+        test_risetime_vs_matlab.py`.
 
         Not yet cursor-located — pass the result to
         `PulseResponse.from_signal(...)` for that; kept as a separate
@@ -140,6 +164,7 @@ class Link:
         """
         h = (
             self.channel.transfer_function(grid.f)
+            * self.tx_filter.transfer_function(grid.f)  # type: ignore[union-attr]
             * self.ctle.transfer_function(grid.f)  # type: ignore[union-attr]
             * self.ffe.transfer_function(grid.f)  # type: ignore[union-attr]
             * self.rx_afe.transfer_function(grid.f)  # type: ignore[union-attr]

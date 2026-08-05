@@ -41,6 +41,7 @@ from serdeskit.link import Link, SystemGrid
 from serdeskit.package import Package, cascade_channel
 from serdeskit.rx_afe import RxAfeButterworth
 from serdeskit.rx_ffe import TapWeightRxFfe
+from serdeskit.tx_filter import TxRisetimeFilter
 
 DATA = Path(__file__).parent.parent / "data" / "pychopmarg_example2"
 
@@ -102,10 +103,15 @@ def test_com_on_real_example2_data() -> None:
     # [0,0,0,0,0,0] / [0,0,0.02,0.02,0,0]); -0.12 = -0.38 + 13*0.02 — an
     # arbitrary, valid combination (see module docstring: no search here).
     ffe = TapWeightFfe(tap_weights=np.array([0.0, 0.0, -0.18, -0.12, 0.0, 0.0]), n_post=3, tap_delay=tap_delay)
+    # Identity -- this config has no verified real Tr, and the hardcoded
+    # expected values below predate tx_filter existing at all (module
+    # docstring: they're this pipeline's own prior output, not an
+    # independent reference), so risetime=0.0 keeps them valid unchanged.
+    tx_filter = TxRisetimeFilter(risetime=0.0)
     rx_afe = RxAfeButterworth(cutoff_freq=0.75 * BAUD_RATE)
     rx_ffe = TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=tap_delay)
 
-    link = Link(channel=channel, ctle=ctle, ffe=ffe, rx_afe=rx_afe, rx_ffe=rx_ffe)
+    link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
     params = ComParams(
         baud_rate=BAUD_RATE,
         freq_step=FREQ_STEP,
