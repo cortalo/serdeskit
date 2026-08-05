@@ -24,12 +24,12 @@ Package note: this config's own z_p(TX)=[13, 31], z_p(NEXT)=[11, 29],
 z_p(FEXT)=[13, 31], z_p(RX)=[11, 29] mm (package case 1 values: 13/11/13/11)
 -- unlike the KR config, where case 1 happened to be uniform (12mm
 everywhere), C2C's NEXT/RX case-1 length (11mm) genuinely differs from
-TX/FEXT's (13mm). evaluate_channel applies one TX_PACKAGE/RX_PACKAGE pair
-to every channel uniformly (victim and aggressors alike); this script
-follows that same simplification rather than extending the architecture
-to carry a NEXT-specific package length, so expect a small extra
-deviation from MATLAB's own per-aggressor-type package modeling on top of
-whatever the search grid's coarseness already contributes.
+TX/FEXT's (13mm). search() applies one TX/RX package pair to every
+channel uniformly (victim and aggressors alike); this script follows
+that same simplification rather than extending the architecture to carry
+a NEXT-specific package length, so expect a small extra deviation from
+MATLAB's own per-aggressor-type package modeling on top of whatever the
+search grid's coarseness already contributes.
 
 Requires two things NOT checked into this repo (both gitignored, unlike
 tests/data/pychopmarg_example2/):
@@ -50,12 +50,12 @@ Run: python examples/compute_com_c2c.py
 """
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import numpy as np
 
-from serdeskit.evaluate import ComStandard, evaluate_channel
+from serdeskit.com import compute
+from serdeskit.optimize import ComStandard, search
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -99,6 +99,7 @@ STANDARD = ComStandard(
     tx_taps_bounds=TX_TAPS_BOUNDS,
     tx_taps_c0_min=0.54,
     tx_taps_n_post=1,  # only c(1) is post-cursor
+    tx_risetime=0.0075e-9,  # this config's own T_r -- see matlab_golden/generate/gen_tx_h_t.m
     rx_afe_cutoff_freq=0.75 * 53.125e9,
     r0=50.0,
     tx_termination_resistance=50.0,  # R_d = [50, 50] in this config too -- matched, gamma1=gamma2=0
@@ -124,50 +125,39 @@ STANDARD = ComStandard(
 
 
 def main() -> None:
-    start = time.monotonic()
-
-    def _progress(done: int, total: int) -> None:
-        elapsed = time.monotonic() - start
-        per_candidate = elapsed / done
-        remaining = per_candidate * (total - done)
-        print(
-            f"  search: {done}/{total}  ({elapsed:.0f}s elapsed, ~{remaining:.0f}s left)",
-            end="\r" if done < total else "\n",
-            flush=True,
-        )
-
-    evaluation = evaluate_channel(
+    params = search(
         STANDARD,
-        thru_path=DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p",
+        thru_path=str(DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p"),
         next_paths=[
-            DATA / "C2C_PCB_SYSVIA_12dB_next1.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_next2.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_next3.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_next4.s4p",
+            str(DATA / "C2C_PCB_SYSVIA_12dB_next1.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_next2.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_next3.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_next4.s4p"),
         ],
         fext_paths=[
-            DATA / "C2C_PCB_SYSVIA_12dB_fext1.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_fext2.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_fext3.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_fext4.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_fext5.s4p",
-            DATA / "C2C_PCB_SYSVIA_12dB_fext6.s4p",
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext1.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext2.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext3.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext4.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext5.s4p"),
+            str(DATA / "C2C_PCB_SYSVIA_12dB_fext6.s4p"),
         ],
         # Unlike Std_BP_12inch_Meg7 (the KR example's channel), this
         # file's own S21 (~0.97 near unity at low frequency, between
         # ports 1-2 and 3-4) matches differential_network's *default*
         # port_order -- ports are already (TX+, RX+, TX-, RX-), the
-        # ECEN720/PyBERT interleaved convention -- so no override here.
-        on_search_progress=_progress,
+        # ECEN720/PyBERT interleaved convention.
+        port_order=(0, 2, 1, 3),
+        show_progress=True,
     )
-    result = evaluation.result
+    result = compute(params)
 
-    print(f"CTLE DC gain:      {evaluation.dc_gain_db:.1f} dB")
-    print(f"CTLE shelf gain:   {evaluation.shelf_gain_db:.1f} dB")
-    print(f"Tx FFE taps:       {evaluation.tx_taps}")
+    print(f"CTLE DC gain:      {params.ctle_dc_gain_db:.1f} dB")
+    print(f"CTLE shelf gain:   {params.ctle_shelf_gain_db:.1f} dB")
+    print(f"Tx FFE taps:       {params.ffe_tap_weights}")
     print()
-    verdict = "PASS" if evaluation.passes else "FAIL"
-    print(f"COM:               {result.com_db:.3f} dB ({verdict} @ {evaluation.com_min_db} dB)")
+    verdict = "PASS" if result.com_db >= STANDARD.com_min_db else "FAIL"
+    print(f"COM:               {result.com_db:.3f} dB ({verdict} @ {STANDARD.com_min_db} dB)")
     print(f"Signal amplitude:  {result.signal_amplitude * 1e3:.3f} mV")
     print(f"Noise amplitude:   {result.noise_amplitude * 1e3:.3f} mV")
     print(f"sigma_Tx:          {result.sigma_tx * 1e3:.3f} mV")
