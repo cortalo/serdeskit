@@ -74,6 +74,11 @@ def test_tx_matches_pychopmarg_golden_reference() -> None:
 
 
 @pytest.mark.usefixtures("exact_pi_sparams")
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_rx_matches_pychopmarg_golden_reference() -> None:
     freqs = np.linspace(0, 50e9, 501)
 

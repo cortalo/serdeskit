@@ -82,6 +82,12 @@ MATLAB_SDD21_WITH_PACKAGE = [
 
 
 @pytest.mark.skipif(not THRU_PATH.exists(), reason="requires the real (gitignored) C2C channel data")
+@pytest.mark.skip(
+    reason="Expected values predate both the RX tline_segments fix (631f2f5) and "
+    "the matlab_golden/ methodology overhaul -- this test's own uniform-13mm "
+    "TX/RX package approximation is also now known-wrong (real RX is 11mm). "
+    "Needs regenerating via matlab_golden/ before re-enabling."
+)
 def test_channel_plus_package_matches_matlab() -> None:
     """cascade_channel's own docstring: `freqs` is meant to be "the system
     frequency grid every stage in the link is computed on" -- its

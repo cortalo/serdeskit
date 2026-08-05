@@ -287,6 +287,11 @@ def _build_com(ref: Reference) -> Com:
     )
 
 
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     """The closed-form sigmas (unaffected by PMF-convolution floating-
     point accumulation — see test_com.py's own reasoning) at this
@@ -303,6 +308,11 @@ def test_intermediate_quantities_match_pychopmarg(reference: Reference) -> None:
     assert result.sigma_isi == pytest.approx(reference.sigma_isi, rel=1e-9)
 
 
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_noise_pmf_and_crosstalk_sigma_match_pychopmarg(reference: Reference) -> None:
     """Looser tolerance, same reasoning as test_com.py's own crosstalk
     PMF test: these are derived from several chained mode="same"

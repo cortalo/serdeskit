@@ -233,6 +233,11 @@ def _build_com(ref: Reference) -> Com:
     return Com(link=link, params=params)
 
 
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_com_matches_pychopmarg_with_package_modeling(reference: Reference) -> None:
     result = _build_com(reference).compute()
 

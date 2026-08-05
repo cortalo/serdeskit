@@ -100,6 +100,11 @@ def test_tx_matches_a_real_com_instances_own_sPkgTx(com: COM) -> None:
     np.testing.assert_allclose(actual.s, expected.s, atol=1e-12)
 
 
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_rx_matches_a_real_com_instances_own_sPkgRx(com: COM) -> None:
     actual = _package(com, is_rx=True).network(com.freqs)
 

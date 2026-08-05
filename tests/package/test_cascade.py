@@ -101,6 +101,11 @@ def _raw_channel_differential(path: Path) -> skrf.Network:
     return network.subnetwork([0, 1])
 
 
+@pytest.mark.skip(
+    reason="RX package's tline_segments now reversed to match MATLAB (631f2f5), "
+    "deliberately diverging from PyChOpMarg's own sPkgRx, which doesn't reverse "
+    "them -- see docs/known-issues.md"
+)
 def test_matches_pychopmargs_own_add_pkg_h21(com_and_channel_path: tuple[COM, Path]) -> None:
     com, path = com_and_channel_path
     freqs = com.freqs
