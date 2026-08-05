@@ -116,3 +116,57 @@ given; the grid just doesn't contain MATLAB's answer. Not investigated
 further: whether `figure_of_merit`'s formula differences from MATLAB's own
 `calc_fom` (documented in `optimize/figure_of_merit.py`'s own docstring)
 would still prefer serdeskit's point even on an unrestricted grid.
+
+## Project policy: MATLAB, not PyChOpMarg, is the authoritative reference
+
+Status: settled (as of the RX `tline_segments` fix below), noted here since
+every earlier entry in this file — and most of this project's existing test
+suite — was written against the older assumption.
+
+PyChOpMarg was adopted early on as the golden-test reference purely for
+development convenience (a Python implementation is far easier to
+cross-check against than the official MATLAB COM3.70 tool). It was never
+meant to be the actual target of correctness — that's always been "does
+this match the official IEEE 802.3 methodology," which the MATLAB tool is
+the closest available proxy for. Where the two disagree, MATLAB wins.
+
+First concrete case: `Package.network()`'s RX side didn't reverse
+`tline_segments` order (only `die_model`'s own `flip` reversed the die
+ladder) — matching PyChOpMarg's own `sPkgRx` exactly, but diverging from
+MATLAB's `make_full_pkg` by ~0.09 max error on a real 2-segment package
+trace. Fixed in `src/serdeskit/package/package.py` (commit `631f2f5`) to
+reverse segments for RX, matching MATLAB; this broke 7 tests that
+golden-tested the old (PyChOpMarg-matching) RX behavior, all now
+`@pytest.mark.skip`-ed with a reason pointing back here rather than
+updated to assert the divergence (asserting "not equal" would verify
+nothing).
+
+Second case, found the same way immediately after: `SParameterChannel.
+transfer_function()` applies a raised-cosine taper across the *entire*
+queried frequency band (not just any extrapolated tail beyond the
+channel's measured range) before returning H21 — traced to PyChOpMarg's
+own `calc_H21` (`pychopmarg/utility/filter.py`), which does exactly this;
+serdeskit's version is a faithful transcription, not an independent bug.
+MATLAB never applies anything like this at the H21/S-parameter level —
+it handles extrapolation/causality differently, via time-domain
+alternating-projections causality correction
+(`com_ieee8023_93a_370.m::s21_to_impulse_DC`), not frequency-domain
+windowing. Confirmed by direct comparison against MATLAB's own
+channel+package S21 for the real C2C thru channel
+(`matlab_golden/data/channel_plus_package_c2c_thru.csv`,
+`tests/channel/test_transfer_function_vs_matlab.py`, currently failing on
+purpose): exact match near DC, growing divergence with frequency, and at
+the high-frequency end serdeskit's `transfer_function()` decays toward
+zero (the taper's own shape) while MATLAB's own H21 stays at a real,
+non-trivial value there. Not yet fixed — this one's a bigger question
+than the RX fix, since MATLAB's own causality-correction approach is a
+genuinely different technique (time-domain, iterative), not a one-line
+formula swap. Whether serdeskit needs the equivalent, or whether the
+raised-cosine taper can just be dropped and DC-extrapolation/edge-padding
+alone are good enough, is still open.
+
+`tests/channel/test_channel_transfer_function.py`'s own PyChOpMarg golden
+test still passes and should stay — it's still correct proof that
+serdeskit faithfully transcribes PyChOpMarg's formula, which remains
+useful (e.g. for catching accidental transcription bugs), even though
+PyChOpMarg itself is no longer the thing serdeskit is trying to match.
