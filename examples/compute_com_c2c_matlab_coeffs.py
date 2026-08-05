@@ -15,14 +15,13 @@ answers that directly.
 
 Two fixes landed here, each closing part of the gap:
 
-1. `Com.compute_sbr()` instead of `Com.compute()`: builds the pulse
-   response via `Link.sbr_pulse_response()` (MATLAB's own real
-   time-domain chain), not `ffe_channel_ctle_pulse_response()`
-   (frequency-domain composition, ~1-2% residual against MATLAB -- see
-   docs/known-issues.md's "full composed pulse response" entry). On its
-   own this barely moved COM (that residual was always too small to
-   explain a multi-dB gap) -- but it's the actually-correct pulse
-   response, verified independently.
+1. `Link.sbr_pulse_response()` (MATLAB's own real time-domain chain,
+   what `compute()` always uses), not the old frequency-domain
+   composition this project used to have (~1-2% residual against
+   MATLAB -- see docs/known-issues.md's "full composed pulse response"
+   entry). On its own this barely moved COM (that residual was always
+   too small to explain a multi-dB gap) -- but it's the actually-correct
+   pulse response, verified independently.
 2. RX_PACKAGE's own length: was 13mm (a uniform-package simplification),
    should be 11mm -- this config's own real z_p(RX) for package case 1
    (see compute_com_c2c.py's own docstring: z_p(TX)=13, z_p(NEXT)=11,
@@ -56,18 +55,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import numpy.typing as npt
-import skrf
 
-from serdeskit.channel import SParameterChannel, differential_network
-from serdeskit.com import Com, ComParams
-from serdeskit.ctle import TwoStageCtle
-from serdeskit.ffe import TapWeightFfe
-from serdeskit.link import Link, SystemGrid
-from serdeskit.package import Package, cascade_channel
-from serdeskit.rx_afe import RxAfeButterworth
-from serdeskit.rx_ffe import TapWeightRxFfe
-from serdeskit.tx_filter import TxRisetimeFilter
+from serdeskit.com import LinkComParams, compute
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -76,84 +65,66 @@ FREQ_STEP = 10e6
 SAMPLES_PER_UI = 32
 R0 = 50.0  # R_d = [50, 50] in this config too -- matched termination, gamma1 = gamma2 = 0
 
-# package_Z_c = [87.5 87.5; 92.5 92.5] Ohm, z_p (package case 1) = 13/1.8 mm
-# for TX. One TX_PACKAGE/RX_PACKAGE pair applied to every channel
-# uniformly (victim and aggressors alike) -- same simplification
-# compute_com_c2c.py's own docstring documents (real z_p(NEXT)=11mm,
-# z_p(FEXT)=13mm differ from this uniform TX/FEXT=13mm treatment; not
-# separately modeled here either).
-TX_PACKAGE = Package(
-    r0=R0,
-    die_capacitances=[1.2e-4 * 1e-9],  # C_d = 1.2e-4 nF
-    die_inductances=[0.12e-9],  # L_s = 0.12 nH
-    bump_capacitance=0.3e-4 * 1e-9,  # C_b = 0.3e-4 nF
-    tline_a1=0.0009909,
-    tline_a2=0.0002772,
-    tline_tau=0.006141,
-    tline_gamma0=0.0,
-    tline_segments=[(87.5, 13.0), (92.5, 1.8)],
-    pad_capacitance=0.87e-4 * 1e-9,  # C_p = 0.87e-4 nF
-    is_rx=False,
-)
-RX_PACKAGE = Package(
-    r0=R0,
-    die_capacitances=[1.2e-4 * 1e-9],
-    die_inductances=[0.12e-9],
-    bump_capacitance=0.3e-4 * 1e-9,
-    tline_a1=0.0009909,
-    tline_a2=0.0002772,
-    tline_tau=0.006141,
-    tline_gamma0=0.0,
-    tline_segments=[(87.5, 11.0), (92.5, 1.8)],  # 11mm, package case 1's real z_p(RX) -- see module docstring
-    pad_capacitance=0.87e-4 * 1e-9,
-    is_rx=True,
-)
-
-
-def _load_channel(path: Path, freqs: npt.NDArray[np.float64]) -> SParameterChannel:
-    """This file's own S21 (~0.97 near unity at low frequency, between
-    ports 1-2 and 3-4) matches differential_network's *default*
-    port_order -- ports are already (TX+, RX+, TX-, RX-), the ECEN720/
-    PyBERT interleaved convention -- so no override here, same as
-    examples/compute_com_c2c.py's own evaluate_channel call.
-    """
-    raw = differential_network(skrf.Network(str(path)))
-    cascaded = cascade_channel(raw, TX_PACKAGE, RX_PACKAGE, freqs)
-    return SParameterChannel(cascaded)
-
 
 def main() -> None:
-    grid = SystemGrid.build(BAUD_RATE, FREQ_STEP, SAMPLES_PER_UI)
-    tap_delay = 1.0 / BAUD_RATE
-
-    channel = _load_channel(DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p", grid.f)
-    next_channels = [
-        _load_channel(DATA / f"C2C_PCB_SYSVIA_12dB_next{n}.s4p", grid.f) for n in [1, 2, 3, 4]
-    ]
-    fext_channels = [
-        _load_channel(DATA / f"C2C_PCB_SYSVIA_12dB_fext{n}.s4p", grid.f) for n in [1, 2, 3, 4, 5, 6]
-    ]
-
-    # MATLAB's own found-optimal point for this channel, package case 1:
-    # "TXFFE coefficients: [-0.02 0.06 -0.2 0.68 -0.04]" = [c(-3), c(-2),
-    # c(-1), c(0), c(1)] -- the cursor (0.68) is computed implicitly here
-    # (TapWeightFfe's own convention), so only the other four are passed,
-    # n_post=1 (only c(1) is post-cursor).
-    ctle = TwoStageCtle(
-        zero_freq=21.25e9,
-        pole1_freq=21.25e9,
-        pole2_freq=53.125e9,
-        shelf_freq=0.6640625e9,
-        dc_gain_db=-3.0,
-        shelf_gain_db=-2.0,
-    )
-    ffe = TapWeightFfe(tap_weights=np.array([-0.02, 0.06, -0.2, -0.04]), n_post=1, tap_delay=tap_delay)
-    tx_filter = TxRisetimeFilter(risetime=0.0075e-9)  # this config's own T_r -- see matlab_golden/generate/gen_tx_h_t.m
-    rx_afe = RxAfeButterworth(cutoff_freq=0.75 * BAUD_RATE)
-    rx_ffe = TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=tap_delay)
-
-    link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
-    params = ComParams(
+    params = LinkComParams(
+        channel_path=str(DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p"),
+        next_channel_paths=[
+            str(DATA / f"C2C_PCB_SYSVIA_12dB_next{n}.s4p") for n in [1, 2, 3, 4]
+        ],
+        fext_channel_paths=[
+            str(DATA / f"C2C_PCB_SYSVIA_12dB_fext{n}.s4p") for n in [1, 2, 3, 4, 5, 6]
+        ],
+        # (TX+, RX+, TX-, RX-) matches this file's own S21 (~0.97 near
+        # unity at low frequency, between ports 1-2 and 3-4) -- same as
+        # compute_com_c2c.py's own evaluate_channel call.
+        port_order=(0, 2, 1, 3),
+        gamma1=0.0,  # R_d = [50, 50] -- matched termination, no reflection
+        gamma2=0.0,
+        # package_Z_c = [87.5 87.5; 92.5 92.5] Ohm, z_p (package case 1) =
+        # 13/1.8mm for TX, 11/1.8mm for RX (case 1's real z_p(RX) -- see
+        # module docstring). One TX/RX package pair applied to every
+        # channel uniformly (victim and aggressors alike) -- same
+        # simplification compute_com_c2c.py's own docstring documents
+        # (real z_p(NEXT)=11mm, z_p(FEXT)=13mm differ from this uniform
+        # TX/FEXT=13mm treatment; not separately modeled here either).
+        tx_r0=R0,
+        tx_die_capacitances=[1.2e-4 * 1e-9],  # C_d = 1.2e-4 nF
+        tx_die_inductances=[0.12e-9],  # L_s = 0.12 nH
+        tx_bump_capacitance=0.3e-4 * 1e-9,  # C_b = 0.3e-4 nF
+        tx_tline_a1=0.0009909,
+        tx_tline_a2=0.0002772,
+        tx_tline_tau=0.006141,
+        tx_tline_gamma0=0.0,
+        tx_tline_segments=[(87.5, 13.0), (92.5, 1.8)],
+        tx_pad_capacitance=0.87e-4 * 1e-9,  # C_p = 0.87e-4 nF
+        rx_r0=R0,
+        rx_die_capacitances=[1.2e-4 * 1e-9],
+        rx_die_inductances=[0.12e-9],
+        rx_bump_capacitance=0.3e-4 * 1e-9,
+        rx_tline_a1=0.0009909,
+        rx_tline_a2=0.0002772,
+        rx_tline_tau=0.006141,
+        rx_tline_gamma0=0.0,
+        rx_tline_segments=[(87.5, 11.0), (92.5, 1.8)],  # 11mm, package case 1's real z_p(RX)
+        rx_pad_capacitance=0.87e-4 * 1e-9,
+        # MATLAB's own found-optimal point for this channel, package case
+        # 1: "TXFFE coefficients: [-0.02 0.06 -0.2 0.68 -0.04]" = [c(-3),
+        # c(-2), c(-1), c(0), c(1)] -- the cursor (0.68) is computed
+        # implicitly here (TapWeightFfe's own convention), so only the
+        # other four are passed, ffe_n_post=1 (only c(1) is post-cursor).
+        ctle_zero_freq=21.25e9,
+        ctle_pole1_freq=21.25e9,
+        ctle_pole2_freq=53.125e9,
+        ctle_shelf_freq=0.6640625e9,
+        ctle_dc_gain_db=-3.0,
+        ctle_shelf_gain_db=-2.0,
+        ffe_tap_weights=np.array([-0.02, 0.06, -0.2, -0.04]),
+        ffe_n_post=1,
+        tx_risetime=0.0075e-9,  # this config's own T_r -- see matlab_golden/generate/gen_tx_h_t.m
+        rx_afe_cutoff_freq=0.75 * BAUD_RATE,
+        rx_ffe_tap_weights=np.array([1.0]),
+        rx_ffe_n_pre=0,
         baud_rate=BAUD_RATE,
         freq_step=FREQ_STEP,
         samples_per_ui=SAMPLES_PER_UI,
@@ -173,7 +144,7 @@ def main() -> None:
         dfe_max=np.array([0.65, 0.15, 0.1, 0.1, 0.1, 0.1]),
     )
 
-    result = Com(link=link, params=params, next_channels=next_channels, fext_channels=fext_channels).compute_sbr()
+    result = compute(params)
 
     print("Using MATLAB's own found-optimal coefficients directly (no search):")
     print("  CTLE DC gain:      -3.0 dB")
