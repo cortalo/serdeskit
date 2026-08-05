@@ -10,17 +10,15 @@ where f_n = f / cutoff_freq.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 
 
+@dataclass(frozen=True)
 class RxAfeButterworth:
-    def __init__(self, cutoff_freq: float) -> None:
-        """
-        Args:
-            cutoff_freq: The AFE's cutoff frequency (Hz).
-        """
-        self.cutoff_freq = cutoff_freq
+    cutoff_freq: float  # The AFE's cutoff frequency (Hz)
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
         """(93A-20): this filter's complex voltage transfer function H(f),

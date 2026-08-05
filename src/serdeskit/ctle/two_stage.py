@@ -20,6 +20,8 @@ voltage gain (g = 10**(dB/20) — voltage, not power, hence /20 not /10).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 from scipy.signal import lfilter
@@ -27,31 +29,14 @@ from scipy.signal import lfilter
 from serdeskit.common.types import Signal
 
 
+@dataclass(frozen=True)
 class TwoStageCtle:
-    def __init__(
-        self,
-        zero_freq: float,
-        pole1_freq: float,
-        pole2_freq: float,
-        shelf_freq: float,
-        dc_gain_db: float,
-        shelf_gain_db: float,
-    ) -> None:
-        """
-        Args:
-            zero_freq: First stage zero frequency (Hz).
-            pole1_freq: First stage lower pole frequency (Hz).
-            pole2_freq: First stage upper pole frequency (Hz).
-            shelf_freq: Second stage zero/pole frequency (Hz).
-            dc_gain_db: First stage d.c. gain (dB).
-            shelf_gain_db: Second stage d.c. gain (dB).
-        """
-        self.zero_freq = zero_freq
-        self.pole1_freq = pole1_freq
-        self.pole2_freq = pole2_freq
-        self.shelf_freq = shelf_freq
-        self.dc_gain_db = dc_gain_db
-        self.shelf_gain_db = shelf_gain_db
+    zero_freq: float  # First stage zero frequency (Hz)
+    pole1_freq: float  # First stage lower pole frequency (Hz)
+    pole2_freq: float  # First stage upper pole frequency (Hz)
+    shelf_freq: float  # Second stage zero/pole frequency (Hz)
+    dc_gain_db: float  # First stage d.c. gain (dB)
+    shelf_gain_db: float  # Second stage d.c. gain (dB)
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
         """(93A-22): this CTLE's complex voltage transfer function H(f), at

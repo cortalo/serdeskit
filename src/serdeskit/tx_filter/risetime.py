@@ -31,17 +31,15 @@ keeps the other branches, for whenever that stops being true).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 
 
+@dataclass(frozen=True)
 class TxRisetimeFilter:
-    def __init__(self, risetime: float) -> None:
-        """
-        Args:
-            risetime: The Tx output driver's 20%-80% risetime (seconds).
-        """
-        self.risetime = risetime
+    risetime: float  # The Tx output driver's 20%-80% risetime (seconds)
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
         """This filter's complex voltage transfer function H(f), at each

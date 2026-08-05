@@ -5,6 +5,7 @@ through it (satisfying serdeskit.link.Channel's `process`).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
@@ -62,23 +63,44 @@ def differential_network(
     return network
 
 
+@dataclass(frozen=True)
 class SParameterChannel:
-    def __init__(self, network: skrf.Network, gamma1: float = 0.0, gamma2: float = 0.0) -> None:
-        """A 4-port `network` is converted to its differential two-port
-        via `differential_network` (see there for the port-order
-        assumption); a 2-port is used as-is.
+    """`network` (a 4-port, converted to its differential two-port via
+    `differential_network` -- see there for the port-order assumption; a
+    2-port is used as-is) plus `gamma1`/`gamma2`, the reflection
+    coefficients looking out of the near/far ends of the channel (e.g.
+    `(R_d - R_0) / (R_d + R_0)` for a die impedance R_d against system
+    reference impedance R_0) — used by `transfer_function` (93A-18) to
+    account for reflections at imperfectly-terminated ends. Default 0.0
+    (perfectly matched, no reflection) makes `transfer_function` reduce
+    to plain S21.
 
-        `gamma1`/`gamma2` are the reflection coefficients looking out of
-        the near/far ends of the channel (e.g. `(R_d - R_0) / (R_d + R_0)`
-        for a die impedance R_d against system reference impedance R_0) —
-        used by `transfer_function` (93A-18) to account for reflections
-        at imperfectly-terminated ends. Default 0.0 (perfectly matched,
-        no reflection) makes `transfer_function` reduce to plain S21.
-        """
-        self._network = differential_network(network)
-        self.gamma1 = gamma1
-        self.gamma2 = gamma2
-        self._cache: tuple[npt.NDArray[np.float64], float, float, npt.NDArray[np.complex128]] | None = None
+    Frozen and identity-hashed (`__hash__`/`__eq__` below), same
+    reasoning as SystemGrid/TapWeightFfe: lets a channel be a cache key
+    (see link.Link.sbr_pulse_response) without the risk of `gamma1`/
+    `gamma2` changing in place under an equalization search that expects
+    to reuse the same channel across many candidates unchanged.
+    `transfer_function`'s own internal `_cache` is the one exception —
+    set via `object.__setattr__` since it's not a real field, just this
+    instance's private memoization state.
+    """
+
+    network: skrf.Network
+    gamma1: float = 0.0
+    gamma2: float = 0.0
+    _network: skrf.Network = field(init=False, repr=False, compare=False)
+    _cache: tuple[npt.NDArray[np.float64], npt.NDArray[np.complex128]] | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_network", differential_network(self.network))
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     @classmethod
     def from_touchstone(cls, path: str) -> SParameterChannel:
@@ -130,11 +152,13 @@ class SParameterChannel:
         equality, avoids hashing the frequency array on every call;
         holding the reference in `_cache` keeps it alive so identity
         can't be confused with an unrelated, since-freed array reusing
-        the same id().
+        the same id(). `gamma1`/`gamma2` no longer need checking here
+        (unlike before this class was frozen): they can't change out
+        from under a cached result anymore.
         """
         cache = self._cache
-        if cache is not None and cache[0] is freqs and cache[1] == self.gamma1 and cache[2] == self.gamma2:
-            return cache[3]
+        if cache is not None and cache[0] is freqs:
+            return cache[1]
 
         in_band = self._network.extrapolate_to_dc().interpolate(
             freqs[freqs <= self._network.f[-1]], kind="cubic", coords="polar",
@@ -150,7 +174,7 @@ class SParameterChannel:
         d_s = s11 * s22 - s12 * s21
         h = (s21 * (1 - g1) * (1 + g2)) / (1 - s11 * g1 - s22 * g2 + g1 * g2 * d_s)
         h = np.asarray(h, dtype=np.complex128)
-        self._cache = (freqs, g1, g2, h)
+        object.__setattr__(self, "_cache", (freqs, h))
         return h
 
     def impulse_response(

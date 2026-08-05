@@ -21,35 +21,41 @@ anything (confirmed directly against a real MATLAB run, not assumed).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 
 from serdeskit.common.types import Signal
 
 
+@dataclass(frozen=True)
 class TapWeightRxFfe:
-    def __init__(self, tap_weights: npt.NDArray[np.float64], tap_delay: float, n_pre: int = 0) -> None:
-        """
-        Args:
-            tap_weights: All tap weights, cursor included, ordered by
-                increasing delay (tap_weights[0] is the earliest tap).
-            tap_delay: T (seconds), the spacing between adjacent taps —
-                one UI, for a baud-spaced Rx FFE.
-            n_pre: How many of `tap_weights`' entries, counting from the
-                start, are pre-cursor. Default 0 (first tap is the
-                cursor) preserves this class's original PyChOpMarg-
-                matching convention — irrelevant for a single tap, the
-                only case this project has exercised in production so
-                far. `process()` needs this to reference delay 0 at the
-                cursor tap, matching MATLAB's own `FFE.m` (see
-                tests/ffe/test_tap_weight_process_vs_matlab.py's
-                equivalent note for Tx FFE); `transfer_function()`
-                doesn't use it (unverified against MATLAB, still matches
-                PyChOpMarg's own first-tap-referenced Hffe_Rx only).
-        """
-        self.tap_weights = tap_weights
-        self.tap_delay = tap_delay
-        self.n_pre = n_pre
+    # All tap weights, cursor included, ordered by increasing delay
+    # (tap_weights[0] is the earliest tap).
+    tap_weights: npt.NDArray[np.float64]
+    tap_delay: float  # T (seconds), the spacing between adjacent taps -- one UI, for a baud-spaced Rx FFE
+    # How many of `tap_weights`' entries, counting from the start, are
+    # pre-cursor. Default 0 (first tap is the cursor) preserves this
+    # class's original PyChOpMarg-matching convention — irrelevant for a
+    # single tap, the only case this project has exercised in production
+    # so far. `process()` needs this to reference delay 0 at the cursor
+    # tap, matching MATLAB's own `FFE.m` (see tests/ffe/
+    # test_tap_weight_process_vs_matlab.py's equivalent note for Tx FFE);
+    # `transfer_function()` doesn't use it (unverified against MATLAB,
+    # still matches PyChOpMarg's own first-tap-referenced Hffe_Rx only).
+    n_pre: int = 0
+
+    def __post_init__(self) -> None:
+        # See TapWeightFfe.__post_init__ for why -- same identity-based
+        # caching concern.
+        self.tap_weights.setflags(write=False)
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
         """This Rx FFE's complex voltage transfer function H(f), at each

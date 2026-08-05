@@ -17,33 +17,38 @@ gain-normalization constraint — see `cursor_weight`.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 
 from serdeskit.common.types import Signal
 
 
+@dataclass(frozen=True)
 class TapWeightFfe:
-    def __init__(
-        self,
-        tap_weights: npt.NDArray[np.float64],
-        n_post: int,
-        tap_delay: float,
-    ) -> None:
-        """
-        Args:
-            tap_weights: Pre/post-cursor tap weights — NOT including the
-                cursor/main tap (see `cursor_weight`). Ordered
-                [pre-cursor taps..., post-cursor taps...].
-            n_post: How many of `tap_weights`' entries (counting from the
-                end) are post-cursor taps; the rest, at the front, are
-                pre-cursor.
-            tap_delay: T (seconds), the spacing between adjacent taps
-                (93A-21) — one UI, for a baud-spaced FFE.
-        """
-        self.tap_weights = tap_weights
-        self.n_post = n_post
-        self.tap_delay = tap_delay
+    # Pre/post-cursor tap weights — NOT including the cursor/main tap
+    # (see `cursor_weight`). Ordered [pre-cursor taps..., post-cursor
+    # taps...].
+    tap_weights: npt.NDArray[np.float64]
+    # How many of `tap_weights`' entries (counting from the end) are
+    # post-cursor taps; the rest, at the front, are pre-cursor.
+    n_post: int
+    tap_delay: float  # T (seconds), the spacing between adjacent taps (93A-21)
+
+    def __post_init__(self) -> None:
+        # `frozen=True` blocks reassigning `tap_weights`, not in-place
+        # mutation of the array it points to -- locked so identity-based
+        # caching keyed on a TapWeightFfe can't be invalidated out from
+        # under it without an error (see SystemGrid.build's own
+        # setflags(write=False) for the same reasoning).
+        self.tap_weights.setflags(write=False)
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
 
     @property
     def cursor_weight(self) -> float:
