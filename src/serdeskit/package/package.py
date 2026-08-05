@@ -57,9 +57,24 @@ class Package:
             freqs, self.r0, self.die_capacitances, self.die_inductances, self.bump_capacitance,
             flip=self.is_rx,
         )
+        # A multi-segment line isn't generally symmetric (each segment is,
+        # but a cascade of *different* segments isn't -- which one you hit
+        # first depends on the direction), so is_rx has to reverse segment
+        # order the same way die_model's own `flip` reverses the die
+        # ladder's rung order. Confirmed empirically against MATLAB
+        # COM3.70's own make_full_pkg for the RX side specifically (a
+        # forward, unreversed segment order matched to ~0.09 max error;
+        # reversed, it matches to float precision) -- see
+        # matlab_golden/data/make_full_pkg_rx.csv and
+        # tests/package/test_make_full_pkg_vs_matlab.py. This is a
+        # deliberate divergence from PyChOpMarg's own sPkgRx, which does
+        # NOT reverse segment order (only the die ladder) -- MATLAB, not
+        # PyChOpMarg, is this project's authoritative reference; see
+        # docs/known-issues.md.
+        tline_segments = list(reversed(self.tline_segments)) if self.is_rx else self.tline_segments
         tline = package_transmission_line(
             freqs, self.r0, self.tline_a1, self.tline_a2, self.tline_tau, self.tline_gamma0,
-            self.tline_segments,
+            tline_segments,
         )
         pad = shunt_capacitor(freqs, self.pad_capacitance, self.r0)
 
