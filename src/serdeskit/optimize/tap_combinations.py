@@ -26,7 +26,7 @@ def tx_tap_combinations(
             and max are ignored) — how an unused tap position is
             represented, not a single-point range at its min.
         min_cursor: The minimum cursor weight a combination must leave
-            (see above); typically `ComParams.c0_min` in the standard's
+            (see above); typically `ComStandard.tx_taps_c0_min` in the standard's
             own terms.
 
     Returns:

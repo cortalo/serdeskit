@@ -21,8 +21,8 @@ com.Com.compute() ends with —
   than combined via PMF convolution and read off a CDF at der_0.
 
 Tx noise (93A-30) and ISI (93A-31 applied to residual ISI) are the same
-formulas com.Com.compute() already uses — composed here from the same
-PulseResponse/ComParams pieces, not reimplemented.
+formulas com.compute() already uses — composed here from the same
+PulseResponse/ComStandard pieces, not reimplemented.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from collections.abc import Sequence
 import numpy as np
 import numpy.typing as npt
 
-from serdeskit.com.params import ComParams
+from serdeskit.optimize.standard import ComStandard
 from serdeskit.pmf import filter_samples
 from serdeskit.pulse_response import PulseResponse
 
@@ -40,7 +40,7 @@ def figure_of_merit(
     pulse_response: PulseResponse,
     aggressor_pulse_responses: Sequence[npt.NDArray[np.float64]],
     rx_response: npt.NDArray[np.complex128],
-    params: ComParams,
+    params: ComStandard,
 ) -> float:
     """(93A-36): 10*log10(As^2 / sum of variances).
 

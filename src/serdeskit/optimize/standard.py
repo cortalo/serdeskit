@@ -1,5 +1,5 @@
 """ComStandard: every input parameter a COM standard configuration
-needs, top to bottom — what Com.compute() needs on its own, plus what
+needs, top to bottom — what com.compute() needs on its own, plus what
 running the equalization search first requires: the CTLE's fixed shape
 and gain search grid, the Tx FFE's tap search grid, and the Rx AFE's
 cutoff. Flat, plain data — no nested objects — mirroring PyChOpMarg's
@@ -7,6 +7,9 @@ own COMParams shape (one flat dataclass covering the whole standard
 configuration) rather than this project's usual small-composed-objects
 convention, since this is meant to be the one place every standard
 parameter lives, not a bundle of already-separate stage configs.
+
+search() turns this into a winning LinkComParams (search space
+resolved to one point); compute() turns that into a ComResult.
 
 `com_min_db` is the pass/fail threshold ("COM Pass threshold" in the
 standard's own configuration tables) — kept here rather than hard-coded
@@ -25,8 +28,8 @@ import numpy.typing as npt
 
 @dataclass(frozen=True)
 class ComStandard:
-    # What Com.compute() needs, given a fixed equalization — same
-    # fields as com.ComParams.
+    # What com.compute() needs, given a fixed equalization — same
+    # fields as com.LinkComParams' own numeric config.
     baud_rate: float  # fb (Hz)
     freq_step: float  # fstep (Hz)
     samples_per_ui: int  # M
@@ -58,6 +61,7 @@ class ComStandard:
     tx_taps_c0_min: float
     tx_taps_n_post: int
 
+    tx_risetime: float  # T_r (s), 20%-80% -- see tx_filter.TxRisetimeFilter. Fixed across the search.
     rx_afe_cutoff_freq: float
 
     # Reference/termination impedances (Ohms) — set gamma1/gamma2 (93A-18),
