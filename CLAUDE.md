@@ -50,24 +50,20 @@ with the pattern. Key properties to preserve:
   `Session` in VirtuosoKit takes `canvas`/`router` as constructor args.
 
 `mypy --strict` is the enforcement mechanism for all of the above — it is
-the substitute for what Go's compiler guarantees for free. **Treat a
-`mypy --strict` failure as equivalent to a Go build failure: it blocks
+the substitute for what Go's compiler guarantees for free (Python's
+`Protocol` is opt-in, checked by `mypy` rather than the compiler). **Treat
+a `mypy --strict` failure as equivalent to a Go build failure: it blocks
 committing, not just a lint warning to clean up later.**
 
-## Why Python, not Go
+## Comments
 
-Considered and rejected writing this in Go (the author's preferred language,
-and what VirtuosoKit is written in) specifically for this project: the
-numerical ecosystem gap (NumPy/SciPy's global optimizers, FFT edge-case
-correctness, `scikit-rf`'s Touchstone/S-parameter handling) is large and
-reimplementing it would cost real time for zero architectural or
-domain-learning benefit. Unlike VirtuosoKit's router (where Go's
-compiled-speed + goroutines were a genuine performance requirement for
-grid-search/geometry work), this project's core computation — convolution,
-occasional optimizer runs — doesn't need that. The one real gap versus Go
-is that Python's structural typing (`Protocol`) is opt-in (checked by
-`mypy`, not the interpreter) rather than compiler-enforced — hence the hard
-`mypy --strict` gate above as the deliberate substitute.
+Keep them short. A comment that restates what the code already shows is
+wasted effort — reading the code directly is usually faster, including
+for an AI picking this up later. Write one only for a genuinely
+non-obvious *why* (a MATLAB cross-reference, a subtle invariant, a
+rejected-alternative reason), and keep it to a sentence or two. Detailed
+investigation narratives (numbers, hypotheses, what was ruled out) belong
+in `docs/known-issues.md`, not inline.
 
 ## Current goal: aligning with MATLAB COM3.70, not PyChOpMarg
 
@@ -107,61 +103,38 @@ marker (registered in `pyproject.toml`, e.g. `rx_tline_segments`,
 against PyChOpMarg (just hardcodes prior output), recompute the expected
 values.
 
-**Verified against MATLAB so far** (each via the recipe above — commits
-in parentheses): package S-parameters incl. the RX `tline_segments` order
-bug (`631f2f5`), `SParameterChannel.transfer_function()`'s erroneous
-raised-cosine taper, now removed (`59fe9ba`), `TwoStageCtle` (`be754bf`,
-no source change needed — already correct), `TapWeightFfe` including a
-real cursor- vs first-tap delay-convention bug, now fixed (`f85c59b`,
-`687129e`), `RxAfeButterworth` (`db5f812`, no source change needed),
-`TxRisetimeFilter` — previously unwired into `Link` entirely and missing
-a phase term; now implements MATLAB's real `H_t` formula (Gaussian
-magnitude + a `3*risetime` delay phase) and is wired into
-`Link.ffe_channel_ctle_pulse_response()` via a new `tx_filter` field.
+**Verified against MATLAB so far** (each via the recipe above): package
+S-parameters incl. the RX `tline_segments` order bug, `SParameterChannel.
+transfer_function()`'s erroneous raised-cosine taper (removed),
+`TwoStageCtle`, `TapWeightFfe` (a real cursor- vs first-tap delay-
+convention bug, fixed), `RxAfeButterworth`, `TxRisetimeFilter` (missing a
+phase term, fixed, now wired into `Link` via a `tx_filter` field). Commit
+history has the details; `docs/known-issues.md` has the investigation
+writeups.
 
-**Known open issues** (full detail in `docs/known-issues.md`):
+**Known open issues** (full detail, numbers, and next steps in
+`docs/known-issues.md` — don't restate them here):
 
 - `TapWeightRxFfe` likely has the same delay-convention bug `TapWeightFfe`
-  had — MATLAB's real Rx FFE signal path reuses the same cursor-referenced
-  `FFE.m` primitive as Tx. Not yet verified with a `matlab_golden` test or
-  fixed. Zero practical impact today (every config exercised so far uses
-  Rx FFE as a single unity tap), but a real, unverified divergence.
-- `PulseResponse.from_signal`'s Muller-Mueller search window is bounded
-  (`range(max(0, peak_ix - nspui), ...)`), not circular, even though
-  `SystemGrid.pulse_response()`'s IFFT output is genuinely periodic. If a
-  config's net delay places the cursor close to sample index 0, precursor
-  samples get clipped instead of wrapping — found via the Tx FFE fix
-  above (which removed an incidental delay margin), confirmed real via
-  `tests/optimize/test_search.py::test_matches_pychopmargs_own_opt_eq`
-  (currently `@pytest.mark.skip`-ed). Unresolved: needs either a delay
-  margin built into `Link`/`SystemGrid`, or a circular window in
-  `PulseResponse.from_signal`.
+  had. Not yet verified or fixed; zero practical impact so far (every
+  config exercised uses Rx FFE as a single unity tap).
+- `PulseResponse.from_signal`'s Muller-Mueller search window isn't
+  circular, even though the pulse response it searches genuinely is — can
+  clip precursor samples if a config's cursor lands near array index 0.
 - `pmf.noise_margin` silently saturates at the voltage grid's edge —
   confirmed root cause, not yet fixed.
-- The full composed pulse response (channel + tx_filter + CTLE + FFE +
-  RxAFE, IFFT'd) was missing a Tx risetime filter entirely — this file
-  used to claim (93A-19) gives it "no role in the pulse response", which
-  was wrong. **Root cause found and fixed**: `TxRisetimeFilter`
-  (`src/serdeskit/tx_filter/risetime.py`, golden-tested,
-  `tests/tx_filter/test_risetime_vs_matlab.py`) is now wired into `Link`
-  via a new `tx_filter` field, closing most of the gap (cursor magnitude
-  +11.6% off before the fix, +0.6% after). A smaller residual (~1-2%,
-  111/321 samples in a ±5 UI window still outside `rtol=1e-3,
-  atol=1e-4`) remains, not yet root-caused — matches an earlier informal
-  "~2% off" estimate, plausibly the same unexplained gap. Leading
-  untested candidates: the S-parameter extrapolation-range/method
-  difference (serdeskit edge-pads past 60 GHz measured data; MATLAB's
-  `interp_Sparam` uses `'linear_trend_to_DC'`/
-  `'extrap_cubic_to_dc_linear_to_inf'`), or MATLAB composing this in the
-  time domain (IFFT once, then `TD_CTLE`'s IIR filter, then `FFE.m`'s
-  circular-shift-sum) rather than serdeskit's single frequency-domain
-  multiply + one IFFT. Full detail and next step (isolate by stage,
-  post-CTLE this time) in `docs/known-issues.md`.
-- **Explicitly out of scope for now**: search/optimization-level alignment
+- The full composed pulse response was missing a Tx risetime filter
+  (fixed — see "Verified against MATLAB" above). A residual (~1-2%)
+  remained after that; root-caused to `SystemGrid.pulse_response()`
+  never truncating its impulse response the way MATLAB's own
+  `s21_to_impulse_DC` does before box-car-integrating it. Fixed for the
+  pre-CTLE/FFE portion (`SystemGrid.truncated_pulse_response()`, now
+  floating-point-exact there); the full composed response still uses the
+  untouched `pulse_response()` and still has the residual — extending
+  the same treatment through CTLE/FFE is the next step.
+- **Out of scope for now**: search/optimization-level alignment
   (`EqualizationSearch`, `figure_of_merit`) against MATLAB's own
-  `opt_eq`/`calc_fom` — hasn't been started. Everything verified so far is
-  per-stage transfer functions and pulse-response composition, not the
-  tap-combination search itself.
+  `opt_eq`/`calc_fom`.
 
 No DFE or ADC implementation exists yet. Bathtub-curve/BER extraction
 (PDA vs. statistical/Gaussian-tail methodology) is still an open design
