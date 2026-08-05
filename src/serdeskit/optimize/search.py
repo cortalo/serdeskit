@@ -15,11 +15,12 @@ number, or to inspect directly for the winning equalization settings.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import numpy.typing as npt
 import skrf
+from tqdm import tqdm
 
 from serdeskit.channel import SParameterChannel, differential_network
 from serdeskit.com import LinkComParams
@@ -39,10 +40,10 @@ from serdeskit.tx_filter import TxRisetimeFilter
 def search(
     standard: ComStandard,
     thru_path: str,
-    next_paths: Sequence[str] = (),
-    fext_paths: Sequence[str] = (),
-    port_order: Sequence[int] = (0, 2, 1, 3),
-    on_progress: Callable[[int, int], None] | None = None,
+    next_paths: Sequence[str],
+    fext_paths: Sequence[str],
+    port_order: Sequence[int],
+    show_progress: bool,
 ) -> LinkComParams:
     """Runs the full grid over `standard`'s CTLE-gain x Tx-tap search
     space, returning a LinkComParams for the combination with the largest
@@ -59,10 +60,10 @@ def search(
         port_order: Forwarded to `differential_network` for every channel
             loaded (victim and aggressors alike — same file family is
             assumed throughout).
-        on_progress: Called as `on_progress(done, total)` after each grid
-            point is evaluated, `done` counting from 1 — a slow real
-            search (e.g. a full standard's grid against a real channel)
-            has no other visible progress otherwise.
+        show_progress: Show a tqdm progress bar (rate, elapsed, ETA) over
+            the grid — a slow real search (e.g. a full standard's grid
+            against a real channel) has no other visible progress
+            otherwise.
 
     Returns:
         A LinkComParams naming `thru_path`/`next_paths`/`fext_paths`
@@ -115,7 +116,7 @@ def search(
     all_zero = np.zeros(len(standard.tx_taps_bounds))
     candidates = [all_zero, *tx_tap_combinations(standard.tx_taps_bounds, standard.tx_taps_c0_min)]
     total = len(standard.ctle_shelf_gain_candidates) * len(standard.ctle_dc_gain_candidates) * len(candidates)
-    done = 0
+    progress = tqdm(total=total, disable=not show_progress)
 
     # NEXT aggressors always use this same flat, unequalized Tx FFE
     # (never the victim's own candidate taps) — but their pulse
@@ -174,10 +175,9 @@ def search(
                         standard, thru_path, next_paths, fext_paths, port_order, dc_gain_db, shelf_gain_db, tx_taps
                     )
 
-                done += 1
-                if on_progress is not None:
-                    on_progress(done, total)
+                progress.update(1)
 
+    progress.close()
     assert best is not None  # candidates always has at least the all-zero entry
     return best
 
