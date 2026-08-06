@@ -58,7 +58,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from serdeskit.com import LinkComParams, compute
-from serdeskit.util import plot_signal
+from serdeskit.util import plot_pulse_response_cursors, plot_signal
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -170,6 +170,7 @@ def main() -> None:
     plot_signal(
         result.half_signal_equalized_pulse_response, ax, label="Half Symbol Equalized end-to-end PR"
     )
+    plot_pulse_response_cursors(result.half_signal_sampled_pulse_response, ax)
     ax.set_xlabel("seconds")
     ax.set_ylabel("volts")
     ax.set_title("C2C thru, MATLAB coeffs")

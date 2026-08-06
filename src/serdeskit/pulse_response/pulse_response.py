@@ -35,6 +35,15 @@ class PulseResponse(Signal):
     def cursor_value(self) -> float:
         return float(self.samples[self.cursor_index])
 
+    def scale(self, factor: float) -> PulseResponse:
+        """Overrides Signal.scale: that one always returns a plain Signal,
+        which would silently drop `cursor_time`/`ui` (and every property
+        derived from them) on a PulseResponse.
+        """
+        return PulseResponse(
+            samples=self.samples * factor, fs=self.fs, t0=self.t0, cursor_time=self.cursor_time, ui=self.ui
+        )
+
     @classmethod
     def from_signal(
         cls,

@@ -69,6 +69,7 @@ class ComResult:
     noise_pmf: npt.NDArray[np.float64]  # the combined interference+noise PMF, (93A-45)
     half_signal_unequalized_pulse_response: Signal
     half_signal_equalized_pulse_response: Signal
+    half_signal_sampled_pulse_response: PulseResponse
 
 
 def compute(params: LinkComParams) -> ComResult:
@@ -218,6 +219,7 @@ def compute(params: LinkComParams) -> ComResult:
         noise_pmf=p_total,
         half_signal_unequalized_pulse_response=grid.box_car_integrate(unequalized_impulse_signal).scale(1/(params.levels - 1)),
         half_signal_equalized_pulse_response=equalized_pulse_signal.scale(1/(params.levels - 1)),
+        half_signal_sampled_pulse_response=pulse_response.scale(1/(params.levels - 1)),
     )
 
 

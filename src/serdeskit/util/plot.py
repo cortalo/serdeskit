@@ -13,6 +13,7 @@ from matplotlib.axes import Axes
 from serdeskit.channel import SParameterChannel
 from serdeskit.common.types import Signal
 from serdeskit.link import EyeData
+from serdeskit.pulse_response import PulseResponse
 
 
 def plot_eye(eye: EyeData, ax: Axes | None = None, title: str = "Eye Diagram") -> Axes:
@@ -65,6 +66,36 @@ def plot_signal(
     ax.set_ylabel("Amplitude (V)")
     ax.set_title(title)
     ax.grid(True)
+    return ax
+
+
+def plot_pulse_response_cursors(pulse_response: PulseResponse, ax: Axes | None = None) -> Axes:
+    """Scatter the cursor, pre-cursor, and post-cursor UI-spaced samples of
+    `pulse_response` on `ax` (a new Axes if none given) -- same one-sample-
+    per-UI convention MATLAB COM3.70's own plot uses (`sampled_best_sbr_
+    precursors`/`_postcursors`, com_ieee8023_93a_370.m), starting at the
+    cursor and stepping by `samples_per_ui` in each direction.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    nspui = pulse_response.samples_per_ui
+    cursor_ix = pulse_response.cursor_index
+    n = len(pulse_response.samples)
+    t = pulse_response.t0 + np.arange(n) / pulse_response.fs
+
+    pre_ixs = np.arange(cursor_ix - nspui, -1, -nspui)[::-1]
+    post_ixs = np.arange(cursor_ix + nspui, n, nspui)
+
+    ax.plot(t[pre_ixs], pulse_response.samples[pre_ixs], "kx", label="Pre cursors")
+    ax.plot(
+        t[post_ixs], pulse_response.samples[post_ixs], "o", markeredgecolor="black",
+        markerfacecolor="none", label="Post cursors",
+    )
+    ax.plot(
+        t[cursor_ix], pulse_response.cursor_value, "o", markeredgecolor="green",
+        markerfacecolor="none", label="Cursor (sample point)",
+    )
     return ax
 
 
