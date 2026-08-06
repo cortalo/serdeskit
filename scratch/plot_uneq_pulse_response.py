@@ -9,12 +9,13 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import numpy.typing as npt
 
-from serdeskit.com import LinkComParams, compute
+from serdeskit.com import ComResult, LinkComParams, compute
+from serdeskit.util import plot_signal
 
 REPO_ROOT = Path(__file__).parents[1]
-MATLAB_CSV = REPO_ROOT / "matlab_golden" / "data" / "uneq_pulse_response_c2c_thru.csv"
+MATLAB_UNEQ_CSV = REPO_ROOT / "matlab_golden" / "data" / "uneq_pulse_response_c2c_thru.csv"
+MATLAB_SBR_CSV = REPO_ROOT / "matlab_golden" / "data" / "sbr_c2c_thru.csv"  # equalized ("best_sbr"), gen_sbr_c2c.m
 DATA = REPO_ROOT / "reference" / "ck_channels" / "c2c_pcb"
 
 BAUD_RATE = 53.125e9
@@ -23,15 +24,15 @@ SAMPLES_PER_UI = 32
 R0 = 50.0
 
 
-def load_matlab_csv(path: Path) -> tuple[list[float], list[float]]:
+def load_matlab_csv(path: Path, value_column: str) -> tuple[list[float], list[float]]:
     with path.open() as f:
         reader = csv.DictReader(f)
-        rows = [(float(row["t"]), float(row["pulse"])) for row in reader]
+        rows = [(float(row["t"]), float(row[value_column])) for row in reader]
     t, pulse = zip(*rows)
     return list(t), list(pulse)
 
 
-def compute_serdeskit_pr() -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+def compute_serdeskit_result() -> ComResult:
     params = LinkComParams(
         channel_path=str(DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p"),
         next_channel_paths=[str(DATA / f"C2C_PCB_SYSVIA_12dB_next{n}.s4p") for n in [1, 2, 3, 4]],
@@ -87,19 +88,23 @@ def compute_serdeskit_pr() -> tuple[npt.NDArray[np.float64], npt.NDArray[np.floa
         dfe_min=np.array([0.3, 0.05, -0.04, -0.04, -0.04, -0.04]),
         dfe_max=np.array([0.65, 0.15, 0.1, 0.1, 0.1, 0.1]),
     )
-    result = compute(params)
-    signal = result.half_signal_unequalized_pulse_response
-    t = signal.t0 + np.arange(len(signal.samples)) / signal.fs
-    return t, signal.samples
+    return compute(params)
 
 
 def main() -> None:
-    matlab_t, matlab_pulse = load_matlab_csv(MATLAB_CSV)
-    serdeskit_t, serdeskit_pulse = compute_serdeskit_pr()
+    matlab_uneq_t, matlab_uneq_pulse = load_matlab_csv(MATLAB_UNEQ_CSV, "pulse")
+    matlab_sbr_t, matlab_sbr_pulse = load_matlab_csv(MATLAB_SBR_CSV, "sbr")
+    result = compute_serdeskit_result()
 
     _, ax = plt.subplots()
-    ax.plot(matlab_t, np.array(matlab_pulse) / (4 - 1), label="MATLAB (uneq_pulse_response_c2c_thru.csv)")
-    ax.plot(serdeskit_t, serdeskit_pulse, label="serdeskit (half_symbol_unequalized_pulse_response)")
+    ax.plot(matlab_uneq_t, np.array(matlab_uneq_pulse) / (4 - 1), label="Half Symbol Unequalized end-to-end PR (MATLAB)")
+    ax.plot(matlab_sbr_t, np.array(matlab_sbr_pulse) / (4 - 1), label="Half Symbol Equalized end-to-end PR (MATLAB)")
+    plot_signal(
+        result.half_signal_unequalized_pulse_response, ax, label="serdeskit (half_symbol_unequalized_pulse_response)"
+    )
+    plot_signal(
+        result.half_signal_equalized_pulse_response, ax, label="serdeskit (half_symbol_equalized_pulse_response)"
+    )
     ax.set_xlabel("t (s)")
     ax.set_ylabel("pulse (V)")
     ax.set_title("Half Symbol Unequalized end-to-end PR (C2C thru)")

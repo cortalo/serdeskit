@@ -30,6 +30,7 @@ from serdeskit.crosstalk import worst_case_phase_samples
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Channel, Ctle, Ffe, Link, RxAfe, RxFfe, SystemGrid, TxFilter
+from serdeskit.link.com_link_with_cache import com_link_with_cache
 from serdeskit.package import Package, cascade_channel
 from serdeskit.pmf import (
     combine_pmfs,
@@ -67,6 +68,7 @@ class ComResult:
     voltage_grid: npt.NDArray[np.float64]  # y (V) the PMFs below are on
     noise_pmf: npt.NDArray[np.float64]  # the combined interference+noise PMF, (93A-45)
     half_signal_unequalized_pulse_response: Signal
+    half_signal_equalized_pulse_response: Signal
 
 
 def compute(params: LinkComParams) -> ComResult:
@@ -118,14 +120,14 @@ def compute(params: LinkComParams) -> ComResult:
         is_rx=True,
     )
 
-    def load_channel(path: str) -> Channel:
+    def load_channel_with_pkg_model(path: str) -> Channel:
         raw = differential_network(skrf.Network(path), port_order=params.port_order)
         cascaded = cascade_channel(raw, tx_package, rx_package, grid.f)
         return SParameterChannel(cascaded, gamma1=params.gamma1, gamma2=params.gamma2)
 
-    channel = load_channel(params.channel_path)
-    next_channels = [load_channel(path) for path in params.next_channel_paths]
-    fext_channels = [load_channel(path) for path in params.fext_channel_paths]
+    channel = load_channel_with_pkg_model(params.channel_path)
+    next_channels = [load_channel_with_pkg_model(path) for path in params.next_channel_paths]
+    fext_channels = [load_channel_with_pkg_model(path) for path in params.fext_channel_paths]
 
     ctle: Ctle = TwoStageCtle(
         zero_freq=params.ctle_zero_freq,
@@ -143,10 +145,11 @@ def compute(params: LinkComParams) -> ComResult:
     )
 
     link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
-
-    signal = link.sbr_pulse_response(grid).scale(params.victim_amplitude)
+    unequalized_impulse_signal = link.unequalized_impulse_response(grid, params.victim_amplitude)
+    cached_link = com_link_with_cache(link=link, unequalized_impulse_signal=unequalized_impulse_signal)
+    equalized_pulse_signal = cached_link.sbr_pulse_response(grid)
     pulse_response = PulseResponse.from_signal(
-        signal,
+        equalized_pulse_signal,
         ui=1.0 / params.baud_rate,
         dfe1_max=float(params.dfe_max[0]),
         dfe1_min=float(params.dfe_min[0]),
@@ -213,9 +216,8 @@ def compute(params: LinkComParams) -> ComResult:
         sigma_crosstalk=float(np.sqrt(var_crosstalk)),
         voltage_grid=y,
         noise_pmf=p_total,
-        half_signal_unequalized_pulse_response=link.half_symbol_unequalized_pulse_response(
-            grid, params.levels
-        ).scale(params.victim_amplitude),
+        half_signal_unequalized_pulse_response=grid.box_car_integrate(unequalized_impulse_signal).scale(1/(params.levels - 1)),
+        half_signal_equalized_pulse_response=equalized_pulse_signal.scale(1/(params.levels - 1)),
     )
 
 

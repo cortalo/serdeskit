@@ -11,6 +11,7 @@ import numpy.typing as npt
 from matplotlib.axes import Axes
 
 from serdeskit.channel import SParameterChannel
+from serdeskit.common.types import Signal
 from serdeskit.link import EyeData
 
 
@@ -43,6 +44,25 @@ def plot_s21(
     ax.plot(freq / 1e9, mag_db, color="steelblue")
     ax.set_xlabel("Frequency (GHz)")
     ax.set_ylabel("S21 (dB)")
+    ax.set_title(title)
+    ax.grid(True)
+    return ax
+
+
+def plot_signal(
+    signal: Signal, ax: Axes | None = None, label: str | None = None, title: str = "Signal"
+) -> Axes:
+    """Plot `signal.samples` against its absolute time axis (`signal.t0` +
+    sample index / `signal.fs`) on `ax` (a new Axes if none given). `label`
+    feeds `ax.legend()`, for overlaying several signals on one Axes.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    t = signal.t0 + np.arange(len(signal.samples)) / signal.fs
+    ax.plot(t, signal.samples, label=label)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude (V)")
     ax.set_title(title)
     ax.grid(True)
     return ax

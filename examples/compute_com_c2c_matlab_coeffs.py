@@ -58,6 +58,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from serdeskit.com import LinkComParams, compute
+from serdeskit.util import plot_signal
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -162,14 +163,17 @@ def main() -> None:
     print(f"sigma_ISI:         {result.sigma_isi * 1e3:.3f} mV")
     print(f"sigma_Crosstalk:   {result.sigma_crosstalk * 1e3:.3f} mV")
 
-    signal = result.half_signal_unequalized_pulse_response
-    t = signal.t0 + np.arange(len(signal.samples)) / signal.fs
-    plt.plot(t, signal.samples, label="Half Symbol Unequalized end-to-end PR")
-    plt.xlabel("seconds")
-    plt.ylabel("volts")
-    plt.title("C2C thru, MATLAB coeffs")
-    plt.legend()
-    plt.grid(True)
+    _, ax = plt.subplots()
+    plot_signal(
+        result.half_signal_unequalized_pulse_response, ax, label="Half Symbol Unequalized end-to-end PR"
+    )
+    plot_signal(
+        result.half_signal_equalized_pulse_response, ax, label="Half Symbol Equalized end-to-end PR"
+    )
+    ax.set_xlabel("seconds")
+    ax.set_ylabel("volts")
+    ax.set_title("C2C thru, MATLAB coeffs")
+    ax.legend()
     plt.tight_layout()
     plt.show()
 

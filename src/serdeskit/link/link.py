@@ -141,21 +141,6 @@ class Link:
         return LinkResult(eye=eye)
 
     def sbr_pulse_response(self, grid: SystemGrid) -> Signal:
-        """MATLAB COM3.70's real computation, end to end — named after its
-        own `sbr`/`eq_pulse_response` (`Apply_EQ`, `com_ieee8023_93a_370.m:
-        680-735`, "returns pulse response with CTLE, TXLE, RXFFE"). Two
-        separate steps rather than one call, since CTLE's own time-domain
-        path (`Ctle.process()`) needs the impulse response, before
-        `box_car_integrate()` turns it into a pulse response:
-        `channel + tx_filter + rx_afe` (truncated impulse response) ->
-        `ctle.process()` (time-domain IIR, twice, per MATLAB's own CL120d
-        two-stage structure) -> box-car integration -> `ffe.process()`
-        (Tx, time-domain circular-shift-sum) -> `rx_ffe.process()` (same
-        shape, Rx-side taps). Requires `self.ctle`/`self.ffe`/`self.
-        tx_filter`/`self.rx_afe`/`self.rx_ffe` to be set.
-        """
-        # self.tx_filter/self.rx_afe are Optional; a genuine caller error at
-        # runtime if unset (AttributeError on None), same as the others below.
         impulse = uneq_truncated_impulse_response(
             self.channel, self.tx_filter, self.rx_afe, grid  # type: ignore[arg-type]
         )
@@ -164,12 +149,11 @@ class Link:
         eq_pulse = self.ffe.process(pulse)  # type: ignore[union-attr]
         return self.rx_ffe.process(eq_pulse)  # type: ignore[union-attr]
 
-    def half_symbol_unequalized_pulse_response(self, grid: SystemGrid, level: int) -> Signal:
+    def unequalized_impulse_response(self, grid: SystemGrid, victim_amplitude: float) -> Signal:
         impulse = uneq_truncated_impulse_response(
             self.channel, self.tx_filter, self.rx_afe, grid  # type: ignore[arg-type]
         )
-        pulse = grid.box_car_integrate(impulse)
-        return pulse.scale(1/(level - 1))
+        return impulse.scale(victim_amplitude)
 
 
 
