@@ -8,7 +8,7 @@ from serdeskit.link.system_grid import SystemGrid
 
 
 @dataclass
-class com_link_with_cache:
+class ComLinkWithCache:
     link: Link
     unequalized_impulse_signal: Signal
 

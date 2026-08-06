@@ -24,9 +24,11 @@ from tqdm import tqdm
 
 from serdeskit.channel import SParameterChannel, differential_network
 from serdeskit.com import LinkComParams
+from serdeskit.common.types import Signal
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Channel, Link, SystemGrid
+from serdeskit.link.com_link_with_cache import ComLinkWithCache
 from serdeskit.optimize.figure_of_merit import figure_of_merit
 from serdeskit.optimize.standard import ComStandard
 from serdeskit.optimize.tap_combinations import tx_tap_combinations
@@ -113,6 +115,21 @@ def search(
     rx_afe = RxAfeButterworth(cutoff_freq=standard.rx_afe_cutoff_freq)
     rx_ffe = TapWeightRxFfe(tap_weights=np.array([1.0]), tap_delay=tap_delay)
 
+    # channel/tx_filter/rx_afe never change across the whole grid (only
+    # ctle/ffe do), so each channel's own unequalized impulse response --
+    # the expensive S-parameter interpolation step -- is computed exactly
+    # once here, already scaled to its own launch amplitude (linear
+    # chain, so scaling before ctle/ffe/rx_ffe processing is equivalent
+    # to scaling the final equalized signal), and reused via
+    # ComLinkWithCache for every (ctle, ffe) combination below instead of
+    # being redone from scratch at every grid point.
+    def unequalized_impulse(ch: Channel, amplitude: float) -> Signal:
+        return Link(channel=ch, tx_filter=tx_filter, rx_afe=rx_afe).unequalized_impulse_response(grid, amplitude)
+
+    victim_impulse = unequalized_impulse(channel, standard.victim_amplitude)
+    next_impulses = [unequalized_impulse(nc, standard.a_ne) for nc in next_channels]
+    fext_impulses = [unequalized_impulse(fc, standard.a_fe) for fc in fext_channels]
+
     all_zero = np.zeros(len(standard.tx_taps_bounds))
     candidates = [all_zero, *tx_tap_combinations(standard.tx_taps_bounds, standard.tx_taps_c0_min)]
     total = len(standard.ctle_shelf_gain_candidates) * len(standard.ctle_dc_gain_candidates) * len(candidates)
@@ -143,17 +160,22 @@ def search(
                 ctle.transfer_function(grid.f) * rx_afe.transfer_function(grid.f) * rx_ffe.transfer_function(grid.f)
             )
             next_prs = [
-                Link(channel=nc, ctle=ctle, ffe=flat_ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
+                ComLinkWithCache(
+                    link=Link(channel=nc, ctle=ctle, ffe=flat_ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe),
+                    unequalized_impulse_signal=next_impulse,
+                )
                 .sbr_pulse_response(grid)
-                .scale(standard.a_ne)
                 .samples
-                for nc in next_channels
+                for nc, next_impulse in zip(next_channels, next_impulses, strict=True)
             ]
 
             for tx_taps in candidates:
                 ffe = TapWeightFfe(tap_weights=tx_taps, n_post=standard.tx_taps_n_post, tap_delay=tap_delay)
-                link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
-                signal = link.sbr_pulse_response(grid).scale(standard.victim_amplitude)
+                cached_link = ComLinkWithCache(
+                    link=Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe),
+                    unequalized_impulse_signal=victim_impulse,
+                )
+                signal = cached_link.sbr_pulse_response(grid)
                 pulse_response = PulseResponse.from_signal(
                     signal,
                     ui=1.0 / standard.baud_rate,
@@ -161,11 +183,13 @@ def search(
                     dfe1_min=float(standard.dfe_min[0]),
                 )
                 fext_prs = [
-                    Link(channel=fc, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
+                    ComLinkWithCache(
+                        link=Link(channel=fc, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe),
+                        unequalized_impulse_signal=fext_impulse,
+                    )
                     .sbr_pulse_response(grid)
-                    .scale(standard.a_fe)
                     .samples
-                    for fc in fext_channels
+                    for fc, fext_impulse in zip(fext_channels, fext_impulses, strict=True)
                 ]
 
                 fom = figure_of_merit(pulse_response, next_prs + fext_prs, rx_response, standard)

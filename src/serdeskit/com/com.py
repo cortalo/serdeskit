@@ -30,7 +30,7 @@ from serdeskit.crosstalk import worst_case_phase_samples
 from serdeskit.ctle import TwoStageCtle
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import Channel, Ctle, Ffe, Link, RxAfe, RxFfe, SystemGrid, TxFilter
-from serdeskit.link.com_link_with_cache import com_link_with_cache
+from serdeskit.link.com_link_with_cache import ComLinkWithCache
 from serdeskit.package import Package, cascade_channel
 from serdeskit.pmf import (
     combine_pmfs,
@@ -149,7 +149,7 @@ def compute(params: LinkComParams) -> ComResult:
 
     link = Link(channel=channel, ctle=ctle, ffe=ffe, tx_filter=tx_filter, rx_afe=rx_afe, rx_ffe=rx_ffe)
     unequalized_impulse_signal = link.unequalized_impulse_response(grid, params.victim_amplitude)
-    cached_link = com_link_with_cache(link=link, unequalized_impulse_signal=unequalized_impulse_signal)
+    cached_link = ComLinkWithCache(link=link, unequalized_impulse_signal=unequalized_impulse_signal)
     equalized_pulse_signal = cached_link.sbr_pulse_response(grid)
     pulse_response = PulseResponse.from_signal(
         equalized_pulse_signal,
