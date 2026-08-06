@@ -13,12 +13,10 @@ serdeskit's own search-then-compute is correct, it should land in the
 same ballpark as MATLAB's 5.299 dB, not collapse to the noise_margin
 saturation artifact documented there.
 
-Same grid-shrink rationale as the KR example: C2C's real ranges are
-smaller (g_DC still 21 candidates, but g_DC_HP only 5, and each Tx tap's
-own range is narrower), but the full cross product is still large enough
-to be impractical for a routine script, so DC_GAIN_CANDIDATES/
-TX_TAPS_BOUNDS below coarsen it (SHELF_GAIN_CANDIDATES needs no
-coarsening -- the real range is only 5 candidates already).
+Search grid matches the config sheet's own real ranges (no coarsening):
+g_DC 21 candidates, g_DC_HP 5, Tx taps c(-3)/c(-2)/c(-1)/c(1) 3/6/15/6
+candidates -- values below captured live from the config
+(matlab_golden's own recipe, not hand-transcribed from the sheet).
 
 Package note: this config's own z_p(TX)=[13, 31], z_p(NEXT)=[11, 29],
 z_p(FEXT)=[13, 31], z_p(RX)=[11, 29] mm (package case 1 values: 13/11/13/11)
@@ -28,8 +26,7 @@ TX/FEXT's (13mm). search() applies one TX/RX package pair to every
 channel uniformly (victim and aggressors alike); this script follows
 that same simplification rather than extending the architecture to carry
 a NEXT-specific package length, so expect a small extra deviation from
-MATLAB's own per-aggressor-type package modeling on top of whatever the
-search grid's coarseness already contributes.
+MATLAB's own per-aggressor-type package modeling.
 
 Requires two things NOT checked into this repo (both gitignored, unlike
 tests/data/pychopmarg_example2/):
@@ -59,28 +56,13 @@ from serdeskit.optimize import ComStandard, search
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
-# Grid shrunk to a single point: MATLAB's own found-optimal case-1
-# coefficients (same numbers compute_com_c2c_matlab_coeffs.py plugs in
-# directly, no search) -- CTLE DC gain -3dB, shelf gain -2dB, TXFFE taps
-# [-0.02, 0.06, -0.2, 0.68, -0.04] (c(-3..1), cursor c(0)=0.68 derived).
-# search()'s own candidate list always prepends the all-zero (flat,
-# unequalized) combination unconditionally on top of whatever
-# TX_TAPS_BOUNDS produces (matching PyChOpMarg's own com._tx_combs[0]),
-# so this is 1 DC gain x 1 shelf gain x 2 Tx-tap candidates (all-zero +
-# this one) = 2 grid points total, not exactly 1.
-DC_GAIN_CANDIDATES = [-3.0]
-SHELF_GAIN_CANDIDATES = [-2.0]
-# step=1.0, not 0.02: with lo==hi, the step's own magnitude is
-# irrelevant to which values land in range -- but np.arange(lo, lo+step,
-# step) is float-rounding-sensitive right at its own endpoint (e.g.
-# np.arange(0.06, 0.08, 0.02) spuriously includes 0.08 too, since
-# 0.06+0.02 isn't exactly representable), and a step this much larger
-# than the values involved stays well clear of that.
+DC_GAIN_CANDIDATES = list(np.arange(-20.0, 1.0, 1.0))  # -20..0 dB, step 1
+SHELF_GAIN_CANDIDATES = list(np.arange(-4.0, 1.0, 1.0))  # -4..0 dB, step 1
 TX_TAPS_BOUNDS = [
-    (-0.02, -0.02, 1.0),  # c(-3)
-    (0.06, 0.06, 1.0),  # c(-2)
-    (-0.2, -0.2, 1.0),  # c(-1)
-    (-0.04, -0.04, 1.0),  # c(1)
+    (-0.04, 0.0, 0.02),  # c(-3)
+    (0.0, 0.1, 0.02),  # c(-2)
+    (-0.28, 0.0, 0.02),  # c(-1)
+    (-0.1, 0.0, 0.02),  # c(1)
 ]
 
 STANDARD = ComStandard(

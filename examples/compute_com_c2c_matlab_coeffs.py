@@ -2,40 +2,9 @@
 MATLAB COM3.70's own found-optimal equalization coefficients directly,
 instead of serdeskit's own search.
 
-examples/compute_com_c2c.py (search-then-compute, the normal path) gets
-COM=2.295 dB against MATLAB's own COM3.70 run of 5.299 dB PASS for the
-same channel/config -- a real ~3 dB gap, unlike the KR example's gap
-(which turned out to be a noise_margin saturation artifact, see
-docs/known-issues.md; C2C's config has floating taps off, so that bug
-doesn't apply here). This script isolates one candidate explanation:
-does serdeskit's own search simply fail to find as good a point as
-MATLAB's exact one, on the *same* coarsened grid compute_com_c2c.py
-uses? Plugging MATLAB's coefficients straight in (no search at all)
-answers that directly.
-
-Two fixes landed here, each closing part of the gap:
-
-1. `Link.sbr_pulse_response()` (MATLAB's own real time-domain chain,
-   what `compute()` always uses), not the old frequency-domain
-   composition this project used to have (~1-2% residual against
-   MATLAB -- see docs/known-issues.md's "full composed pulse response"
-   entry). On its own this barely moved COM (that residual was always
-   too small to explain a multi-dB gap) -- but it's the actually-correct
-   pulse response, verified independently.
-2. RX_PACKAGE's own length: was 13mm (a uniform-package simplification),
-   should be 11mm -- this config's own real z_p(RX) for package case 1
-   (see compute_com_c2c.py's own docstring: z_p(TX)=13, z_p(NEXT)=11,
-   z_p(FEXT)=13, z_p(RX)=11mm). This was the dominant error: fixing it
-   alone moves COM from 2.821 dB to 5.565 dB.
-
-Current result, both fixes applied: COM=5.565 dB (search-free numbers
-below are updated to match) vs. MATLAB's 5.299 dB -- ~0.27 dB
-remains, plausibly from the same NEXT/FEXT package-length simplification
-compute_com_c2c.py's own docstring already documents as accepted
-(evaluate_channel/this script apply one TX_PACKAGE/RX_PACKAGE pair to
-every channel uniformly, victim and aggressors alike, rather than
-per-aggressor-type lengths) -- not yet confirmed, next thing to check if
-picked up.
+Current result: COM=5.263 dB vs. MATLAB's 5.299 dB PASS (~0.036 dB gap,
+likely the NEXT/FEXT package-length simplification compute_com_c2c.py's
+own docstring documents -- not yet confirmed).
 
 MATLAB's case-1 result (package case 1, 13mm TX / 11mm RX):
   CTLE DC gain:     -3 dB
