@@ -69,12 +69,22 @@ def plot_signal(
     return ax
 
 
-def plot_pulse_response_cursors(pulse_response: PulseResponse, ax: Axes | None = None) -> Axes:
+def plot_pulse_response_cursors(
+    pulse_response: PulseResponse,
+    ax: Axes | None = None,
+    dfe_min: npt.NDArray[np.float64] | None = None,
+    dfe_max: npt.NDArray[np.float64] | None = None,
+) -> Axes:
     """Scatter the cursor, pre-cursor, and post-cursor UI-spaced samples of
     `pulse_response` on `ax` (a new Axes if none given) -- same one-sample-
     per-UI convention MATLAB COM3.70's own plot uses (`sampled_best_sbr_
     precursors`/`_postcursors`, com_ieee8023_93a_370.m), starting at the
     cursor and stepping by `samples_per_ui` in each direction.
+
+    If `dfe_min`/`dfe_max` are given, also stems each DFE-cancelled tap
+    (`PulseResponse.dfe_cancelled_cursors`) from 0 up to the cancelled
+    amount (pre-cancellation minus post-cancellation), matching MATLAB's
+    own "DFE-canceled cursors" magenta stem plot.
     """
     if ax is None:
         _, ax = plt.subplots()
@@ -92,10 +102,24 @@ def plot_pulse_response_cursors(pulse_response: PulseResponse, ax: Axes | None =
         t[post_ixs], pulse_response.samples[post_ixs], "o", markeredgecolor="black",
         markerfacecolor="none", label="Post cursors",
     )
+    ax.vlines(t[cursor_ix], 0, pulse_response.cursor_value, colors="green")
     ax.plot(
         t[cursor_ix], pulse_response.cursor_value, "o", markeredgecolor="green",
         markerfacecolor="none", label="Cursor (sample point)",
     )
+
+    if dfe_min is not None and dfe_max is not None:
+        cursors = pulse_response.dfe_cancelled_cursors(dfe_min, dfe_max)
+        for i, (dfe_t, pre, post) in enumerate(cursors):
+            ax.plot(
+                [dfe_t, dfe_t], [0, pre - post], color="magenta", linewidth=2,
+                label="DFE-canceled cursors" if i == 0 else None,
+            )
+        dfe_ts, dfe_pres, dfe_posts = zip(*cursors) if cursors else ((), (), ())
+        cancelled = [pre - post for pre, post in zip(dfe_pres, dfe_posts)]
+        ax.plot(dfe_ts, cancelled, "o", markeredgecolor="magenta", markerfacecolor="none")
+        ax.plot(dfe_ts, dfe_posts, "o", markeredgecolor="black", markerfacecolor="none")
+
     return ax
 
 

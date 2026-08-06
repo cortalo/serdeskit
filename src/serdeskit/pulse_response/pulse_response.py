@@ -114,6 +114,57 @@ class PulseResponse(Signal):
         """
         return float(rlm * self.cursor_value / (levels - 1))
 
+    def dfe_cancelled_cursors(
+        self, dfe_min: npt.NDArray[np.float64], dfe_max: npt.NDArray[np.float64]
+    ) -> list[tuple[float, float, float]]:
+        """(93A-26): one (time, pre-cancellation, post-cancellation) tuple
+        per DFE tap -- the post-cursor UI-spaced samples a real,
+        range-limited DFE cancels, before and after that cancellation.
+        Matches MATLAB COM3.70's own "DFE-canceled cursors" stem plot
+        (com_ieee8023_93a_370.m: `dfe_cursors = sampled_best_sbr_
+        postcursors(1:ndfe)`, `DFE_taps_mV = dfe_clipper(...)`,
+        `sampled_best_sbr_postcursors(1:ndfe) = dfe_SBRcursors -
+        DFE_taps_mV`) -- DFE only cancels post-cursor ISI, so there's no
+        pre-cursor counterpart.
+
+        Call this on an already `.scale(1/(levels-1))`'d PulseResponse
+        (e.g. ComResult.half_signal_sampled_pulse_response) to get
+        display-scaled values directly -- the tap-weight ratio below is
+        scale-invariant, so no separate levels argument is needed here.
+
+        Args:
+            dfe_min: Per-tap lower limits on DFE tap weight, normalized
+                to the cursor value; length sets the DFE's span.
+            dfe_max: Per-tap upper limits; must be the same length as
+                `dfe_min`.
+
+        Returns:
+            One (time, pre-cancellation, post-cancellation) tuple per
+            DFE tap, ordered nearest-cursor first.
+
+        Raises:
+            ValueError: `dfe_min` and `dfe_max` differ in length.
+        """
+        if len(dfe_min) != len(dfe_max):
+            raise ValueError(
+                f"dfe_min and dfe_max must be the same length (one entry per DFE "
+                f"tap), got {len(dfe_min)} and {len(dfe_max)}."
+            )
+
+        nspui = self.samples_per_ui
+        cursor_ui, cursor_phase = divmod(self.cursor_index, nspui)
+        per_ui = self.samples[cursor_phase::nspui]
+
+        pre_cancellation = per_ui[cursor_ui + 1 : cursor_ui + 1 + len(dfe_min)]
+        tap_weights = np.clip(pre_cancellation / self.cursor_value, dfe_min, dfe_max)  # (93A-26)
+        post_cancellation = pre_cancellation - tap_weights * self.cursor_value  # (93A-27)
+
+        times = self.cursor_time + np.arange(1, len(dfe_min) + 1) * self.ui
+        return [
+            (float(t), float(pre), float(post))
+            for t, pre, post in zip(times, pre_cancellation, post_cancellation, strict=True)
+        ]
+
     def residual_isi(
         self,
         dfe_min: npt.NDArray[np.float64],

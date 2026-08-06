@@ -170,7 +170,9 @@ def main() -> None:
     plot_signal(
         result.half_signal_equalized_pulse_response, ax, label="Half Symbol Equalized end-to-end PR"
     )
-    plot_pulse_response_cursors(result.half_signal_sampled_pulse_response, ax)
+    plot_pulse_response_cursors(
+        result.half_signal_sampled_pulse_response, ax, dfe_min=params.dfe_min, dfe_max=params.dfe_max
+    )
     ax.set_xlabel("seconds")
     ax.set_ylabel("volts")
     ax.set_title("C2C thru, MATLAB coeffs")
