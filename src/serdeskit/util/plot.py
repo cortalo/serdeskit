@@ -69,6 +69,48 @@ def plot_signal(
     return ax
 
 
+def plot_bathtub(
+    pmf: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    signal_amplitude: float,
+    ax: Axes | None = None,
+    label: str | None = None,
+) -> Axes:
+    """Plot one bathtub curve for `pmf` (on voltage grid `y`) on `ax` (a
+    new Axes if none given) -- matches MATLAB COM3.70's own
+    plot_bathtub_curves (com_ieee8023_93a_370.m:772-809) for its
+    ISI/Xtalk/ISI+Xtalk/jitter+noise/jitter-noise curves: convolve the
+    signal's own two decision levels (delta spikes at +-signal_amplitude,
+    each probability 0.5) with `pmf`, then fold the running CDF around
+    0.5 (`abs(cumsum(...)-0.5)`).
+
+    Uses *full*, non-truncating convolution (like MATLAB's own conv_fct,
+    which grows its array on every convolution) rather than a fixed-width
+    "same" convolution -- `pmf` can already span nearly the whole of `y`
+    (e.g. the combined ISI+crosstalk+jitter+Gaussian PMF), so truncating
+    to `y`'s own width after shifting it out to a cursor near that grid's
+    edge would silently discard most of the mass.
+    """
+    if ax is None:
+        _, ax = plt.subplots()
+
+    ystep = y[1] - y[0]
+
+    def spike_conv(level: float) -> npt.NDArray[np.float64]:
+        spike = np.zeros_like(y)
+        spike[int(np.argmin(np.abs(y - level)))] = 0.5
+        return np.asarray(np.convolve(spike, pmf, mode="full"), dtype=np.float64)
+
+    combined = spike_conv(-signal_amplitude) + spike_conv(signal_amplitude)
+    x = 2 * y[0] + ystep * np.arange(len(combined))
+
+    ax.semilogy(x, np.abs(np.cumsum(combined) - 0.5), label=label)
+    ax.set_xlabel("volts")
+    ax.set_ylabel("Probability")
+    ax.grid(True)
+    return ax
+
+
 def plot_pulse_response_cursors(
     pulse_response: PulseResponse,
     ax: Axes | None = None,

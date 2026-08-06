@@ -58,7 +58,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from serdeskit.com import LinkComParams, compute
-from serdeskit.util import plot_pulse_response_cursors, plot_signal
+from serdeskit.util import plot_bathtub, plot_pulse_response_cursors, plot_signal
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -177,7 +177,17 @@ def main() -> None:
     ax.set_ylabel("volts")
     ax.set_title("C2C thru, MATLAB coeffs")
     ax.legend()
-    plt.tight_layout()
+
+    _, bathtub_ax = plt.subplots()
+    plot_bathtub(result.isi_pmf, result.voltage_grid, result.signal_amplitude, bathtub_ax, label="ISI")
+    plot_bathtub(result.noise_pmf, result.voltage_grid, result.signal_amplitude, bathtub_ax, label="total noise")
+    bathtub_ax.axhline(params.der_0, color="r", linestyle=":", linewidth=1)
+    bathtub_ax.set_ylim(params.der_0 / 10, 1)
+    bathtub_ax.set_title("C2C thru, MATLAB coeffs -- bathtub")
+    bathtub_ax.legend()
+
+    for fig_num in plt.get_fignums():
+        plt.figure(fig_num).tight_layout()
     plt.show()
 
 
