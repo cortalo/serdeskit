@@ -160,7 +160,7 @@ def compute(params: LinkComParams) -> ComResult:
     signal_amplitude = pulse_response.signal_amplitude(params.rlm, params.levels)
     y = voltage_grid(signal_amplitude)
 
-    slopes = pulse_response.local_slopes(signal_amplitude)
+    slopes = pulse_response.local_slopes()
     p_jitter = delta_pmf(
         filter_samples(params.a_dd * slopes, 1.1 * signal_amplitude), params.levels, y
     )

@@ -154,14 +154,23 @@ def main() -> None:
     print("  Tx FFE taps:       [-0.02, 0.06, -0.2, -0.04]")
     print()
     verdict = "PASS" if result.com_db >= 3.0 else "FAIL"
+    # MATLAB reference values (case 1), captured live from a real
+    # com_ieee8023_93a_370 run against this same channel/config -- see
+    # matlab_golden/lib/Create_Noise_PDF.m for A_s/A_ni/sigma_TX/
+    # sigma_rjit/sigma_N (NS.sigma_TX/.sigma_rjit/.sigma_N). sigma_ISI/
+    # sigma_Crosstalk below are *not* MATLAB's own sci_sigma/cci_sigma
+    # (those are peak-at-specBER-based, a different definition) -- they're
+    # sqrt(sum(y^2*p)) computed directly off NS.sci_pdf/.cci_pdf, matching
+    # how sigma_isi/sigma_crosstalk are actually defined here, for a real
+    # apples-to-apples comparison.
     print(f"COM:               {result.com_db:.3f} dB ({verdict} @ 3.0 dB)  -- MATLAB got 5.299 dB PASS")
-    print(f"Signal amplitude:  {result.signal_amplitude * 1e3:.3f} mV")
-    print(f"Noise amplitude:   {result.noise_amplitude * 1e3:.3f} mV")
-    print(f"sigma_Tx:          {result.sigma_tx * 1e3:.3f} mV")
-    print(f"sigma_Jitter:      {result.sigma_jitter * 1e3:.3f} mV")
-    print(f"sigma_Noise:       {result.sigma_noise * 1e3:.3f} mV")
-    print(f"sigma_ISI:         {result.sigma_isi * 1e3:.3f} mV")
-    print(f"sigma_Crosstalk:   {result.sigma_crosstalk * 1e3:.3f} mV")
+    print(f"Signal amplitude:  {result.signal_amplitude * 1e3:.3f} mV  -- MATLAB got 20.044 mV")
+    print(f"Noise amplitude:   {result.noise_amplitude * 1e3:.3f} mV  -- MATLAB got 10.890 mV")
+    print(f"sigma_Tx:          {result.sigma_tx * 1e3:.3f} mV  -- MATLAB got 1.417 mV")
+    print(f"sigma_Jitter:      {result.sigma_jitter * 1e3:.3f} mV  -- MATLAB got 0.515 mV")
+    print(f"sigma_Noise:       {result.sigma_noise * 1e3:.3f} mV  -- MATLAB got 0.689 mV")
+    print(f"sigma_ISI:         {result.sigma_isi * 1e3:.3f} mV  -- MATLAB got 1.723 mV")
+    print(f"sigma_Crosstalk:   {result.sigma_crosstalk * 1e3:.3f} mV  -- MATLAB got 0.229 mV")
 
     _, ax = plt.subplots()
     plot_signal(

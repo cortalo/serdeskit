@@ -66,7 +66,7 @@ def figure_of_merit(
     residual = pulse_response.residual_isi(params.dfe_min, params.dfe_max)  # (93A-26)/(93A-27)
     var_isi = params.level_variance * float((residual**2).sum())  # (93A-31)
 
-    slopes = pulse_response.local_slopes(signal_amplitude)
+    slopes = pulse_response.local_slopes()
     var_jitter = (
         (params.a_dd**2 + params.sigma_rj**2) * params.level_variance * float((slopes**2).sum())
     )  # (93A-32)

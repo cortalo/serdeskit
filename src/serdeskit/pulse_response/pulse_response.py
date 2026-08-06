@@ -239,40 +239,41 @@ class PulseResponse(Signal):
 
         return np.asarray(h_isi, dtype=np.float64)
 
-    def local_slopes(
-        self, signal_amplitude: float, threshold: float = 0.001
-    ) -> npt.NDArray[np.float64]:
-        """(93A-28): central-difference slope (volts/UI) at each valid
-        UI-spaced sample from this pulse response's cursor onward.
+    def local_slopes(self) -> npt.NDArray[np.float64]:
+        """(93A-28): central-difference slope (volts/UI) at each UI-spaced
+        sample sharing the cursor's own phase, across the *entire* pulse
+        response — both pre- and post-cursor, no amplitude filtering.
 
-        Args:
-            signal_amplitude: As, the signal amplitude (volts) — sets the
-                (relative) threshold below which a sample is excluded.
-            threshold: Samples with |amplitude| below `threshold *
-                signal_amplitude` are excluded. Default: 0.001 (0.1%, per
-                NOTE 2 of 93A.1.7.1).
+        Matches MATLAB COM3.70's own h_J computation for
+        `OP.LIMIT_JITTER_CONTRIB_TO_DFE_SPAN=0` (com_ieee8023_93a_370.m:
+        6247-6253/7302-7308) — the default, unrestricted case; verified
+        against a real run to rtol=1e-3 on `norm(h_J)`
+        (matlab_golden/data/h_j_c2c_thru.csv, tests/pulse_response/
+        test_local_slopes_vs_matlab_c2c.py). This replaces an earlier,
+        PyChOpMarg-matching version that only walked the cursor onward and
+        dropped low-amplitude samples — MATLAB does neither, and that
+        divergence was the dominant cause of a ~20% low sigma_Jitter
+        (see examples/compute_com_c2c_matlab_coeffs.py's own printed
+        comparison). The `OP.LIMIT_JITTER_CONTRIB_TO_DFE_SPAN=1` variant
+        (tap-position-limited, not amplitude-limited either) isn't
+        implemented — this project's configs don't set that flag.
 
         Returns:
-            The slope (volts/UI) at each included UI sample, in order.
+            The slope (volts/UI) at each UI-spaced, cursor-phase-aligned
+            sample, earliest first.
         """
-        thresh = signal_amplitude * threshold
         nspui = self.samples_per_ui
 
-        candidate_ixs = np.arange(self.cursor_index, len(self.samples) - 1, nspui)
-        # TODO: filtering candidates by *sample amplitude* here matches
-        # PyChOpMarg's calc_hJ exactly (our golden reference), but a small
-        # sample amplitude doesn't imply a small slope there (e.g. near a
-        # zero crossing) — this filter can silently drop a UI with a
-        # genuinely large slope. The official IEEE 802.3 MATLAB COM tool
-        # (com_ieee8023_93a_370.m, both h_J computations, ~line 6253/7308)
-        # applies no amplitude filtering at all for this quantity: it either
-        # takes the full available range unconditionally, or truncates by
-        # *tap position* (OP.LIMIT_JITTER_CONTRIB_TO_DFE_SPAN, limited to
-        # the DFE span) — never by amplitude. Left as-is for now, matching
-        # the golden reference; revisit if this project ever needs to match
-        # the official tool instead of PyChOpMarg bit-for-bit.
-        valid_ixs = candidate_ixs[np.abs(self.samples[candidate_ixs]) >= thresh]
+        # MATLAB (1-indexed): cursor_i = self.cursor_index + 1;
+        # sampling_offset = mod(cursor_i, nspui), bumped by nspui if <=1
+        # so the early sample (sampling_offset - 1) never indexes before
+        # the array's start ("ensure we can take early sample").
+        sampling_offset = (self.cursor_index + 1) % nspui
+        if sampling_offset <= 1:
+            sampling_offset += nspui
 
-        m1s = self.samples[valid_ixs - 1]
-        p1s = self.samples[valid_ixs + 1]
-        return np.asarray((p1s - m1s) / (2.0 / nspui), dtype=np.float64)
+        early = self.samples[sampling_offset - 2 :: nspui]
+        late = self.samples[sampling_offset::nspui]
+        early = early[: len(late)]
+
+        return np.asarray((late - early) / 2.0 * nspui, dtype=np.float64)
