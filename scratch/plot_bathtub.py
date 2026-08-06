@@ -113,6 +113,10 @@ def main() -> None:
         ax.semilogy(x, y, color=COLORS.get(name), label=name)
     plot_bathtub(result.isi_pmf, result.voltage_grid, result.signal_amplitude, ax, label="ISI (serdeskit)")
     plot_bathtub(result.noise_pmf, result.voltage_grid, result.signal_amplitude, ax, label="total noise (serdeskit)")
+    plot_bathtub(
+        result.jitter_plus_rv_pmf, result.voltage_grid, result.signal_amplitude, ax,
+        label="Jitter, SNR_TX,RL_M, eta_0 noise (serdeskit)",
+    )
     ax.axhline(SPEC_BER, color="r", linestyle=":", linewidth=1)
     ax.set_ylim(SPEC_BER / 10, 1)
     ax.set_xlabel("volts")

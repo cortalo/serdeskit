@@ -71,6 +71,7 @@ class ComResult:
     half_signal_equalized_pulse_response: Signal
     half_signal_sampled_pulse_response: PulseResponse
     isi_pmf: npt.NDArray[np.float64]
+    jitter_plus_rv_pmf: npt.NDArray[np.float64]
 
 
 def compute(params: LinkComParams) -> ComResult:
@@ -222,6 +223,7 @@ def compute(params: LinkComParams) -> ComResult:
         half_signal_equalized_pulse_response=equalized_pulse_signal.scale(1/(params.levels - 1)),
         half_signal_sampled_pulse_response=pulse_response.scale(1/(params.levels - 1)),
         isi_pmf=p_isi,
+        jitter_plus_rv_pmf=combine_pmfs(p_jitter, p_gaussian),
     )
 
 
