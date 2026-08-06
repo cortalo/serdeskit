@@ -52,7 +52,7 @@ from pathlib import Path
 import numpy as np
 
 from serdeskit.com import compute
-from serdeskit.optimize import ComStandard, search
+from serdeskit.optimize import ComStandard, local_search
 
 DATA = Path("../reference/ck_channels/c2c_pcb")
 
@@ -125,7 +125,7 @@ STANDARD = ComStandard(
 
 
 def main() -> None:
-    params = search(
+    params = local_search(
         STANDARD,
         thru_path=str(DATA / "C2C_PCB_SYSVIA_12dB_thru.s4p"),
         next_paths=[
