@@ -22,7 +22,9 @@ TOUCHSTONE_PATH = "../reference/ecen720/peters_01_0605_B12_thru.s4p"
 
 
 def main() -> None:
-    channel = SParameterChannel.from_touchstone(TOUCHSTONE_PATH)
+    # peters_* is ECEN720/PyBERT interleaved (TX+, RX+, TX-, RX-) -- see
+    # differential_network's own docstring.
+    channel = SParameterChannel.from_touchstone(TOUCHSTONE_PATH, port_order=(0, 2, 1, 3))
 
     plot_impulse_response(
         channel, title="B12 Backplane Channel", dt=1e-12, xlim=(3e-9, 6e-9)

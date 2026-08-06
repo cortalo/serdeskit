@@ -25,7 +25,9 @@ SAMPLES_PER_UI = 20
 
 
 def main() -> None:
-    channel = SParameterChannel.from_touchstone(TOUCHSTONE_PATH)
+    # peters_* is ECEN720/PyBERT interleaved (TX+, RX+, TX-, RX-) -- see
+    # differential_network's own docstring.
+    channel = SParameterChannel.from_touchstone(TOUCHSTONE_PATH, port_order=(0, 2, 1, 3))
     link = Link(channel=channel)
 
     rng = np.random.default_rng(seed=0)

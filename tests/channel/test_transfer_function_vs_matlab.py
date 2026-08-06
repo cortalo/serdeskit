@@ -78,7 +78,7 @@ def test_transfer_function_matches_matlab() -> None:
     expected_s21 = np.array([complex(float(r["s21_r"]), float(r["s21_i"])) for r in rows])
 
     network = skrf.Network(str(THRU_PATH))
-    diff = differential_network(network)
+    diff = differential_network(network, port_order=(0, 2, 1, 3))
     cascaded = cascade_channel(diff, TX_PACKAGE, RX_PACKAGE, freqs)
     channel = SParameterChannel(cascaded)  # gamma1=gamma2=0.0 defaults -- matched termination
 

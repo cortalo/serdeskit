@@ -69,7 +69,7 @@ def test_channel_plus_package_matches_matlab() -> None:
     expected_s21 = np.array([complex(float(r["s21_r"]), float(r["s21_i"])) for r in rows])
 
     network = skrf.Network(str(THRU_PATH))
-    diff = differential_network(network)
+    diff = differential_network(network, port_order=(0, 2, 1, 3))
     # cascade_channel's own raw output, not SParameterChannel.transfer_function():
     # that method applies a raised-cosine taper across the whole band (for
     # extrapolation safety beyond the measured range, per its own docstring) --

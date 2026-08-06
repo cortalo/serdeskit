@@ -80,7 +80,7 @@ def _serdeskit_sbr() -> np.ndarray:
     tap_delay = 1.0 / BAUD_RATE
 
     network = skrf.Network(str(CHAN_DIR / "C2C_PCB_SYSVIA_12dB_thru.s4p"))
-    diff = differential_network(network)
+    diff = differential_network(network, port_order=(0, 2, 1, 3))
     cascaded = cascade_channel(diff, TX_PACKAGE, RX_PACKAGE, grid.f)
     channel = SParameterChannel(cascaded)
 

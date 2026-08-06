@@ -5,7 +5,7 @@ through it (satisfying serdeskit.link.Channel's `process`).
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -15,18 +15,17 @@ from scipy.signal import fftconvolve
 from serdeskit.common.types import Signal
 
 
-def differential_network(
-    network: skrf.Network, port_order: Sequence[int] = (0, 2, 1, 3)
-) -> skrf.Network:
-    """A 4-port network is assumed single-ended, in the port order used
-    by the ECEN 720 `peters_*`/`Case4_*` Touchstone files and by MATLAB's
-    `s2sdd` default (see reference/ecen720/read_sparam.m): (TX+, RX+,
+def differential_network(network: skrf.Network, port_order: Sequence[int] | None) -> skrf.Network:
+    """A 4-port network is assumed single-ended, in some port order that
+    only the caller knows (there is no safe default — see below) — e.g.
+    the ECEN 720 `peters_*`/`Case4_*` Touchstone files and MATLAB's
+    `s2sdd` default (see reference/ecen720/read_sparam.m) use (TX+, RX+,
     TX-, RX-). scikit-rf's `se2gmm` instead expects each differential
     pair's two ends adjacent — (TX+, TX-, RX+, RX-) — so ports are
-    renumbered [0,1,2,3] -> [0,2,1,3] (`port_order`'s default) before
-    conversion. This matches the permutation PyBERT's `import_freq()`
-    documents for the same file family ([4k, 4k+2, 4k+1, 4k+3] for lane
-    k=0).
+    renumbered [0,1,2,3] -> `port_order` before conversion. For the
+    interleaved convention above, that's `(0, 2, 1, 3)` — matching the
+    permutation PyBERT's `import_freq()` documents for the same file
+    family ([4k, 4k+2, 4k+1, 4k+3] for lane k=0).
 
     Not every Touchstone file family uses that convention, though — e.g.
     the IEEE 802.3ck tools archive's `Std_BP_12inch_Meg7_*` backplane
@@ -34,6 +33,16 @@ def differential_network(
     `Index_S4P-2019-3628.txt`. Pass `port_order=(0, 1, 2, 3)` (identity)
     for those — `se2gmm` can pair ports (0,1)/(2,3) directly, no
     renumbering first.
+
+    `port_order` has no default on purpose: silently assuming the
+    interleaved convention would have looked fine on every ECEN720/C2C
+    file this project has used so far and then silently mis-paired a
+    `Std_BP_12inch_Meg7_*`-style file the day someone reaches for one —
+    the caller has to look at the actual file family and choose. For a
+    2-port `network`, there's nothing to choose (no conversion happens),
+    so `port_order` must be `None` — passing a real-looking tuple that's
+    then silently ignored would be exactly the kind of "looks explicit,
+    isn't" gap this whole project avoids elsewhere.
 
     Exposed as its own function — not just inlined in
     `SParameterChannel.__init__` — for callers that need the raw
@@ -43,50 +52,67 @@ def differential_network(
     Args:
         network: A 2-port (returned unchanged) or 4-port network.
         port_order: The permutation applied before `se2gmm`, mapping
-            `[0, 1, 2, 3]` to this. Default assumes the ECEN720/PyBERT
-            interleaved convention; pass `(0, 1, 2, 3)` for files whose
-            ports are already adjacent-paired.
+            `[0, 1, 2, 3]` to this — `(0, 2, 1, 3)` for the ECEN720/
+            PyBERT interleaved convention, `(0, 1, 2, 3)` for files whose
+            ports are already adjacent-paired. Must be `None` when
+            `network` is already a 2-port (there's no renumbering to do).
 
     Returns:
         The differential two-port (SDD: Tx-diff -> Rx-diff).
 
     Raises:
-        ValueError: `network` is neither 2-port nor 4-port.
+        ValueError: `network` is neither 2-port nor 4-port, `network` is
+            4-port and `port_order` is `None`, or `network` is 2-port and
+            `port_order` is not `None`.
     """
     if network.nports == 4:
+        if port_order is None:
+            raise ValueError("port_order is required for a 4-port network")
         network = network.copy()
         network.renumber([0, 1, 2, 3], list(port_order))
         network.se2gmm(p=2)  # mutates in place: ports become d0, d1, c0, c1
         return network.subnetwork([0, 1])  # SDD: TX-diff -> RX-diff
     if network.nports != 2:
         raise ValueError(f"expected a 2-port or 4-port network, got {network.nports}-port")
+    if port_order is not None:
+        raise ValueError("port_order must be None for an already 2-port network (nothing to convert)")
     return network
 
 
 @dataclass
 class SParameterChannel:
-    """`network` (a 4-port, converted to its differential two-port via
-    `differential_network` -- see there for the port-order assumption; a
-    2-port is used as-is) plus `gamma1`/`gamma2`, the reflection
-    coefficients looking out of the near/far ends of the channel (e.g.
-    `(R_d - R_0) / (R_d + R_0)` for a die impedance R_d against system
-    reference impedance R_0) — used by `transfer_function` (93A-18) to
-    account for reflections at imperfectly-terminated ends. Default 0.0
-    (perfectly matched, no reflection) makes `transfer_function` reduce
-    to plain S21.
+    """`network` must already be a differential two-port (SDD: Tx-diff ->
+    Rx-diff) — this class doesn't do 4-port-to-2-port conversion itself
+    (it used to, taking a `port_order` to forward; that made `port_order`
+    a required-but-silently-ignored argument on every call site that
+    already had a 2-port network in hand, e.g. after cascading with a
+    package model). Callers holding a raw 4-port network convert it
+    themselves first, via `differential_network(network, port_order=...)`
+    — `from_touchstone` does exactly that.
+
+    `gamma1`/`gamma2` are the reflection coefficients looking out of the
+    near/far ends of the channel (e.g. `(R_d - R_0) / (R_d + R_0)` for a
+    die impedance R_d against system reference impedance R_0) — used by
+    `transfer_function` (93A-18) to account for reflections at
+    imperfectly-terminated ends. Default 0.0 (perfectly matched, no
+    reflection) makes `transfer_function` reduce to plain S21.
     """
 
     network: skrf.Network
     gamma1: float = 0.0
     gamma2: float = 0.0
-    _network: skrf.Network = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self._network = differential_network(self.network)
+        if self.network.nports != 2:
+            raise ValueError(
+                f"SParameterChannel expects an already-differential 2-port network "
+                f"(convert a 4-port one via differential_network() first) — "
+                f"got {self.network.nports}-port"
+            )
 
     @classmethod
-    def from_touchstone(cls, path: str) -> SParameterChannel:
-        return cls(skrf.Network(path))
+    def from_touchstone(cls, path: str, port_order: Sequence[int] | None) -> SParameterChannel:
+        return cls(differential_network(skrf.Network(path), port_order=port_order))
 
     def s21(self, freq: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
         """Differential S21, interpolated onto `freq` (Hz). `freq` must lie
@@ -97,7 +123,7 @@ class SParameterChannel:
         # itself, defaulting to Hz but emitting a DeprecationWarning about
         # it — pass an explicit Frequency to avoid relying on that default.
         target = skrf.Frequency.from_f(freq, unit="Hz")
-        interpolated = self._network.interpolate(target, coords="polar")
+        interpolated = self.network.interpolate(target, coords="polar")
         return np.asarray(interpolated.s[:, 1, 0], dtype=np.complex128)
 
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
@@ -121,8 +147,8 @@ class SParameterChannel:
         `tests/channel/test_transfer_function_vs_matlab.py`): matches to
         float precision without the taper.
         """
-        in_band = self._network.extrapolate_to_dc().interpolate(
-            freqs[freqs <= self._network.f[-1]], kind="cubic", coords="polar",
+        in_band = self.network.extrapolate_to_dc().interpolate(
+            freqs[freqs <= self.network.f[-1]], kind="cubic", coords="polar",
             basis="t", assume_sorted=True,
         )
         pad_len = len(freqs) - len(in_band.f)
@@ -168,7 +194,7 @@ class SParameterChannel:
         `read_sparam.m` uses `Ts=1ps`; matching that here (`dt=1e-12`)
         reproduces its ~5.3 mV peak for the B12 channel.
         """
-        network = self._network.extrapolate_to_dc()
+        network = self.network.extrapolate_to_dc()
         n = None
         if dt is not None:
             df = network.f[1] - network.f[0]

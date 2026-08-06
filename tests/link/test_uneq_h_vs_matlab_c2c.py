@@ -83,7 +83,7 @@ def test_uneq_h_matches_matlab() -> None:
     expected_h = np.array([complex(float(r["h_r"]), float(r["h_i"])) for r in rows])
 
     network = skrf.Network(str(THRU_PATH))
-    diff = differential_network(network)
+    diff = differential_network(network, port_order=(0, 2, 1, 3))
     cascaded = cascade_channel(diff, TX_PACKAGE, RX_PACKAGE, freqs)
     channel = SParameterChannel(cascaded)  # gamma1=gamma2=0.0 defaults -- matched termination
     tx_filter = TxRisetimeFilter(risetime=0.0075e-9)  # this config's own T_r -- see gen_tx_h_t.m

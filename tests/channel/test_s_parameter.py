@@ -3,7 +3,7 @@ import pytest
 import skrf
 from scipy.integrate import cumulative_trapezoid
 
-from serdeskit.channel import SParameterChannel
+from serdeskit.channel import SParameterChannel, differential_network
 from serdeskit.channel.s_parameter import _trim_impulse
 from serdeskit.common.types import Signal
 
@@ -29,7 +29,9 @@ def test_s21_2port_returns_interpolated_values() -> None:
 def test_s21_4port_peters_convention_matches_single_trace() -> None:
     """Two identical, uncoupled thru traces in (TX+, RX+, TX-, RX-) port
     order should differentially transmit exactly like one trace alone —
-    this is what pins down the renumber permutation in SParameterChannel.
+    this is what pins down the renumber permutation in differential_network
+    (SParameterChannel itself now only accepts an already-differential
+    2-port network; the 4-port conversion is the caller's job).
     """
     freq = np.array([1e9, 2e9, 3e9, 4e9, 5e9])
     r, t = 0.1 + 0.0j, 0.5 + 0.0j
@@ -41,10 +43,44 @@ def test_s21_4port_peters_convention_matches_single_trace() -> None:
         s[i, 2:4, 2:4] = trace  # ports 2,3 = TX-, RX-
     network = skrf.Network(f=freq, s=s, z0=50, f_unit="Hz")
 
-    channel = SParameterChannel(network)
+    # (TX+, RX+, TX-, RX-) -- the ECEN720/PyBERT interleaved convention.
+    diff = differential_network(network, port_order=(0, 2, 1, 3))
+    channel = SParameterChannel(diff)
     result = channel.s21(freq)
 
     np.testing.assert_allclose(result, np.full(len(freq), t), atol=1e-9)
+
+
+def test_differential_network_4port_requires_port_order() -> None:
+    """port_order=None on a 4-port network is a caller bug (there's no safe
+    default to fall back to — see differential_network's own docstring),
+    not a "use identity" shorthand.
+    """
+    freq = np.array([1e9, 2e9])
+    trace = _thru_trace_block(0.1 + 0.0j, 0.5 + 0.0j)
+    s = np.zeros((len(freq), 4, 4), dtype=complex)
+    for i in range(len(freq)):
+        s[i, 0:2, 0:2] = trace
+        s[i, 2:4, 2:4] = trace
+    network = skrf.Network(f=freq, s=s, z0=50, f_unit="Hz")
+
+    with pytest.raises(ValueError, match="port_order is required"):
+        differential_network(network, port_order=None)
+
+
+def test_differential_network_2port_rejects_port_order() -> None:
+    """A 2-port network has nothing to renumber -- a non-None port_order
+    here would silently be ignored if allowed through, which is exactly
+    the "looks explicit, isn't" gap this function's contract rules out.
+    """
+    freq = np.array([1e9, 2e9])
+    s = np.zeros((len(freq), 2, 2), dtype=complex)
+    s[:, 1, 0] = 0.5
+    s[:, 0, 1] = 0.5
+    network = skrf.Network(f=freq, s=s, z0=50, f_unit="Hz")
+
+    with pytest.raises(ValueError, match="must be None"):
+        differential_network(network, port_order=(0, 2, 1, 3))
 
 
 def test_impulse_response_step_settles_to_dc_s21() -> None:

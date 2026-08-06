@@ -167,7 +167,9 @@ def _link(setup: Setup, path: Path, flat_tx: bool = False) -> Link:
     n_post = N_TX_POST_TAPS
     baud_rate = float(cfg.fb) * 1e9
     return Link(
-        channel=SParameterChannel.from_touchstone(str(path)),
+        # _synthetic_s4p pairs ports (0,1) and (2,3) directly -- already
+        # adjacent, not the ECEN720/PyBERT interleaved convention.
+        channel=SParameterChannel.from_touchstone(str(path), port_order=(0, 1, 2, 3)),
         ctle=TwoStageCtle(
             zero_freq=float(cfg.f_z) * 1e9,
             pole1_freq=float(cfg.f_p1) * 1e9,
