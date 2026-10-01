@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from serdeskit.adapt import SampledPulseChannel, SymbolRateLink, TxFfe
+from serdeskit.adapt import RxDfe, SampledPulseChannel, SymbolRateLink, TxFfe
 
 A = np.array([0.05, 0.5, 0.25, 0.1])  # one pre-cursor
 TAPS = np.array([-0.05, 0.7, -0.2, 0.05])  # one pre-tap -> latency 1 + 1
@@ -78,3 +78,48 @@ def test_tap_view_and_update() -> None:
 
     np.testing.assert_array_equal(link.tap_weights, [-0.1, 0.58, -0.3, 0.02])
     assert link.main_tap == 1
+
+
+def _dfe_link(n_dfe: int) -> SymbolRateLink:
+    """Main cursor 0.5, first post-cursor 0.6: a plain slicer gets every
+    transition wrong; a 1-tap DFE with alpha = 0.6 cancels it exactly.
+    """
+    return SymbolRateLink(
+        channel=SampledPulseChannel(cursors=np.array([0.5, 0.6]), n_pre=0),
+        ffe=TxFfe(weights=np.array([1.0]), main=0),
+        dfe=RxDfe(taps=np.zeros(n_dfe)),
+    )
+
+
+def test_dfe_subtracts_the_post_cursor_and_decides_correctly() -> None:
+    rng = np.random.default_rng(2)
+    symbols = rng.choice(np.array([-1.0, 1.0]), size=100)
+    link = _dfe_link(n_dfe=1)
+    link.set_dfe_taps(np.array([0.6]))
+
+    rx = link.respond(symbols)
+
+    np.testing.assert_allclose(rx.r[1:], 0.5 * symbols[1:], atol=1e-12)
+    np.testing.assert_array_equal(rx.decisions[1:], symbols[1:])
+
+
+def test_without_dfe_the_same_channel_makes_errors() -> None:
+    rng = np.random.default_rng(2)
+    symbols = rng.choice(np.array([-1.0, 1.0]), size=100)
+
+    rx = _dfe_link(n_dfe=0).respond(symbols)
+
+    assert np.any(rx.decisions != symbols)
+
+
+def test_dfe_feedback_carries_across_blocks() -> None:
+    rng = np.random.default_rng(3)
+    symbols = rng.choice(np.array([-1.0, 1.0]), size=100)
+    whole, chunked = _dfe_link(n_dfe=1), _dfe_link(n_dfe=1)
+    for link in (whole, chunked):
+        link.set_dfe_taps(np.array([0.6]))
+
+    one = whole.respond(symbols)
+    parts = [chunked.respond(c) for c in np.split(symbols, [41, 42])]
+
+    np.testing.assert_allclose(np.concatenate([p.r for p in parts]), one.r, atol=1e-12)

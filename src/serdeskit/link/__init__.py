@@ -1,6 +1,7 @@
 from serdeskit.link.link import (
     Channel,
     Ctle,
+    Dfe,
     EyeData,
     Ffe,
     Link,
@@ -12,5 +13,5 @@ from serdeskit.link.link import (
 from serdeskit.link.system_grid import SystemGrid
 
 __all__ = [
-    "Channel", "Ctle", "EyeData", "Ffe", "Link", "LinkResult", "RxAfe", "RxFfe", "SystemGrid", "TxFilter",
+    "Channel", "Ctle", "Dfe", "EyeData", "Ffe", "Link", "LinkResult", "RxAfe", "RxFfe", "SystemGrid", "TxFilter",
 ]

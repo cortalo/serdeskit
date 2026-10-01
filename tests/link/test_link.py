@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from serdeskit.adapt import RxDfe
 from serdeskit.channel import PassThroughChannel
 from serdeskit.common.types import Signal
 from serdeskit.ffe import TapWeightFfe
@@ -78,3 +79,43 @@ def test_eye_windows_start_on_the_zero_crossings() -> None:
         traces = link.simulate(bits=bits, fs=100e9, symbol_rate=10e9).eye.traces
 
         assert _crossing_rows(traces) == {10}, f"delay={delay}"
+
+
+@dataclass
+class _EchoChannel:
+    """Adds `gain` times the signal one UI (`delay` samples) later: a pure
+    first post-cursor."""
+
+    gain: float
+    delay: int
+
+    def process(self, sig: Signal) -> Signal:
+        echo = np.concatenate([np.zeros(self.delay), sig.samples[: -self.delay]])
+        return Signal(samples=sig.samples + self.gain * echo, fs=sig.fs, t0=sig.t0)
+
+    def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]:
+        raise NotImplementedError
+
+
+def test_dfe_cancels_the_post_cursor_over_each_sampled_ui() -> None:
+    """Echo of 0.6 one UI later; a 1-tap DFE of 0.6 removes it everywhere in
+    the UI around each sampling instant, leaving a clean +/-1 eye.
+    """
+    rng = np.random.default_rng(1)
+    bits = rng.choice(np.array([-1.0, 1.0]), size=300)
+    link = Link(channel=_EchoChannel(gain=0.6, delay=10), dfe=RxDfe(taps=np.array([0.6])))
+
+    traces = link.simulate(bits=bits, fs=100e9, symbol_rate=10e9).eye.traces
+
+    np.testing.assert_allclose(np.abs(traces[:, 1:]), 1.0, atol=1e-12)
+
+
+def test_without_dfe_the_echo_stays_in_the_eye() -> None:
+    rng = np.random.default_rng(1)
+    bits = rng.choice(np.array([-1.0, 1.0]), size=300)
+
+    traces = Link(channel=_EchoChannel(gain=0.6, delay=10)).simulate(
+        bits=bits, fs=100e9, symbol_rate=10e9
+    ).eye.traces
+
+    assert np.isclose(np.abs(traces), 0.4).any()

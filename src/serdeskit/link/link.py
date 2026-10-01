@@ -45,6 +45,15 @@ class Ffe(Protocol):
     def transfer_function(self, freqs: npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 
+class Dfe(Protocol):
+    """What Link.simulate() needs from an RX DFE: its taps, volts --
+    taps[k - 1] times the decision k UI earlier is subtracted.
+    """
+
+    @property
+    def taps(self) -> npt.NDArray[np.float64]: ...
+
+
 class TxFilter(Protocol):
     """What Link needs from a Tx-side filter — frequency-domain only, no
     `process`. Concrete example: `tx_filter.TxRisetimeFilter`, the
@@ -106,7 +115,8 @@ def uneq_truncated_impulse_response(
 @dataclass
 class Link:
     """channel is the stage the bit-domain `simulate()` pipeline runs the
-    launched signal through, after the TX `ffe` if one is set.
+    launched signal through, after the TX `ffe` if one is set and before
+    the RX `dfe` if one is set.
     `ctle`/`tx_filter`/`rx_afe`/`rx_ffe` are only used by
     `sbr_pulse_response()` — optional since `simulate()` doesn't need
     them; left unset and then used there raises a plain
@@ -129,6 +139,7 @@ class Link:
     tx_filter: TxFilter | None = None
     rx_afe: RxAfe | None = None
     rx_ffe: RxFfe | None = None
+    dfe: Dfe | None = None
 
     def simulate(self, bits: npt.NDArray[np.float64], fs: float, symbol_rate: float) -> LinkResult:
         """bits is one value per symbol; symbol_rate is what turns it into a
@@ -139,9 +150,51 @@ class Link:
         if self.ffe is not None:
             sig = self.ffe.process(sig)
         sig = self.channel.process(sig)
+        if self.dfe is not None and len(self.dfe.taps):
+            sig = self._apply_dfe(sig, len(bits), symbol_rate)
 
         eye = _extract_eye(sig, symbol_rate)
         return LinkResult(eye=eye)
+
+    def _apply_dfe(self, sig: Signal, n_symbols: int, symbol_rate: float) -> Signal:
+        """Decide each symbol at its main cursor's sampling instant (the
+        isolated pulse's peak), subtracting the DFE feedback from past
+        decisions; that feedback is held over the 1 UI centered on the
+        sampling instant, so the eye around it shows the cancelled ISI.
+        """
+        taps = self.dfe.taps  # type: ignore[union-attr]
+        samples_per_ui = round(sig.fs / symbol_rate)
+        delay = self._cursor_delay(sig.fs, symbol_rate)
+
+        out = sig.samples.copy()
+        past = [0.0] * len(taps)  # decisions, most recent first
+        for n in range(n_symbols):
+            center = (n / symbol_rate + delay - sig.t0) * sig.fs
+            i = int(np.floor(center + 0.5))
+            if not 0 <= i < len(out):
+                continue
+            feedback = sum(t * d for t, d in zip(taps, past))
+            decision = 1.0 if sig.samples[i] - feedback > 0 else -1.0
+            start = int(np.ceil(center - samples_per_ui / 2))  # window centered on `center`
+            out[max(start, 0) : max(start + samples_per_ui, 0)] -= feedback
+            past = [decision] + past[:-1]
+        return Signal(samples=out, fs=sig.fs, t0=sig.t0)
+
+    def _cursor_delay(self, fs: float, symbol_rate: float) -> float:
+        """Seconds from a symbol's start to its main cursor: the peak of one
+        isolated pulse through the TX FFE and channel (the middle of the
+        peak, if it is flat).
+        """
+        samples_per_ui = round(fs / symbol_rate)
+        m = 200  # UI of idle line before the pulse, so the channel settles
+        pulse = np.zeros(2 * m * samples_per_ui)
+        pulse[m * samples_per_ui : (m + 1) * samples_per_ui] = 1.0
+        sig = Signal(samples=pulse, fs=fs, t0=0.0)
+        if self.ffe is not None:
+            sig = self.ffe.process(sig)
+        y = self.channel.process(sig)
+        peak = np.flatnonzero(y.samples >= y.samples.max() * (1 - 1e-9)).mean()
+        return float(y.t0 + peak / fs - m / symbol_rate)
 
     def sbr_pulse_response(self, grid: SystemGrid) -> Signal:
         impulse = uneq_truncated_impulse_response(

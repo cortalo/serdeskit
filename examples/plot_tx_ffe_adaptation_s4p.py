@@ -22,7 +22,6 @@ import numpy.typing as npt
 
 from serdeskit.adapt import SampledPulseChannel, SignSignLms, SymbolRateLink, TxFfe
 from serdeskit.channel import SParameterChannel
-from serdeskit.common.types import Signal
 from serdeskit.ffe import TapWeightFfe
 from serdeskit.link import EyeData, Link
 from serdeskit.util import plot_eye
@@ -35,14 +34,10 @@ N_EYE_SYMBOLS = 10_000
 
 
 def sampled_cursors(channel: SParameterChannel) -> npt.NDArray[np.float64]:
-    """The pulse response to one isolated 1 V, 1 UI pulse, sampled once per
-    UI on the peak's phase: N_PRE pre-cursors, a_0, N_POST post-cursors.
-    """
-    pulse = np.zeros(400 * SAMPLES_PER_UI)
-    pulse[200 * SAMPLES_PER_UI : 201 * SAMPLES_PER_UI] = 1.0
-    y = channel.process(Signal(samples=pulse, fs=SAMPLES_PER_UI * SYMBOL_RATE)).samples
-    peak = int(np.argmax(y))
-    return np.asarray(y[peak + SAMPLES_PER_UI * np.arange(-N_PRE, N_POST + 1)], dtype=np.float64)
+    """UI-spaced pulse-response samples on the peak's phase: N_PRE, a_0, N_POST."""
+    return SampledPulseChannel.from_waveform(
+        channel, SYMBOL_RATE, SAMPLES_PER_UI, n_pre=N_PRE, n_post=N_POST
+    ).cursors
 
 
 def tx_ffe_eye(channel: SParameterChannel, ffe: TxFfe, bits: npt.NDArray[np.float64]) -> EyeData:
