@@ -1,11 +1,13 @@
 # Eye diagram data: design survey
 
-Status: v1 implemented in `link/link.py::_extract_eye` — 1 UI step, 2 UI
-window (conclusion 2 below), `EyeData.traces` shape (conclusion 1). Not yet
-done: zero-crossing alignment (conclusion 3) and a transient-skip parameter
-(conclusion 4) — v1 just starts windows at sample 0, which is only correct
-because `PassThroughChannel` has zero delay and zero transient. Revisit both
-before a real S-parameter channel replaces it.
+Status: implemented in `link/link.py::_extract_eye` — 1 UI step, 2 UI
+window (conclusion 2 below), `EyeData.traces` shape (conclusion 1), and
+zero-crossing alignment (conclusion 3): the eye center is the middle of
+the longest stretch of UI phases with the fewest crossings (a crossing
+histogram over all edges, not one edge's time or their mean -- equalized
+signals' crossings split into pattern-dependent clusters), placed at 0.5 UI
+so two full eyes sit at 0.5 and 1.5 UI (the ECEN720 lecture plots'
+convention). Not yet done: a transient-skip parameter (conclusion 4).
 
 ## Sources compared
 

@@ -106,9 +106,10 @@ def uneq_truncated_impulse_response(
 @dataclass
 class Link:
     """channel is the stage the bit-domain `simulate()` pipeline runs the
-    launched signal through. `ctle`/`ffe`/`tx_filter`/`rx_afe`/`rx_ffe`
-    are only used by `sbr_pulse_response()` — optional since `simulate()`
-    doesn't need them; left unset and then used there raises a plain
+    launched signal through, after the TX `ffe` if one is set.
+    `ctle`/`tx_filter`/`rx_afe`/`rx_ffe` are only used by
+    `sbr_pulse_response()` — optional since `simulate()` doesn't need
+    them; left unset and then used there raises a plain
     AttributeError, which is fine (a caller building a pulse response
     without equalization is a caller error, not a case worth a
     defensive check).
@@ -135,6 +136,8 @@ class Link:
         """
         samples = _upsample_bits(bits, fs, symbol_rate)
         sig = Signal(samples=samples, fs=fs, t0=0.0)
+        if self.ffe is not None:
+            sig = self.ffe.process(sig)
         sig = self.channel.process(sig)
 
         eye = _extract_eye(sig, symbol_rate)
@@ -169,16 +172,51 @@ def _upsample_bits(bits: npt.NDArray[np.float64], fs: float, symbol_rate: float)
 def _extract_eye(sig: Signal, symbol_rate: float) -> EyeData:
     """Sliding window: 1 UI step, 2 UI width (see docs/eye-diagram-design.md
     for why — matches MATLAB/PyBERT, not serdespy's non-overlapping split).
-    No zero-crossing alignment yet: PassThroughChannel has no delay, so
-    windows starting at sample 0 are already UI-aligned.
+    Windows are aligned so the eye center lands at 0.5 UI, giving two full,
+    symmetric eyes at 0.5 and 1.5 UI whatever the channel's delay; a signal
+    that never crosses zero keeps windows starting at sample 0.
     """
     samples_per_ui = round(sig.fs / symbol_rate)
     window = 2 * samples_per_ui
-    n_traces = (len(sig.samples) - window) // samples_per_ui + 1
+    center = _eye_center_phase(sig.samples, samples_per_ui)
+    offset = 0 if center is None else round(center - samples_per_ui / 2) % samples_per_ui
+    n_traces = (len(sig.samples) - offset - window) // samples_per_ui + 1
 
     traces = np.empty((window, n_traces), dtype=np.float64)
     for i in range(n_traces):
-        start = i * samples_per_ui
+        start = offset + i * samples_per_ui
         traces[:, i] = sig.samples[start : start + window]
 
     return EyeData(traces=traces, ui=1.0 / symbol_rate, fs=sig.fs)
+
+
+def _eye_center_phase(samples: npt.NDArray[np.float64], samples_per_ui: int) -> float | None:
+    """Eye center's position within a UI, in samples: the middle of the
+    longest (circular) stretch of UI phases where zero crossings are rarest.
+    None if the signal never crosses zero.
+
+    Not "mean crossing + 0.5 UI": strong equalization splits crossings into
+    several clusters by data pattern, and their mean can fall between them
+    rather than opposite the opening.
+    """
+    after = np.flatnonzero(np.signbit(samples[1:]) != np.signbit(samples[:-1])) + 1
+    if len(after) == 0:
+        return None
+    hist = np.bincount(after % samples_per_ui, minlength=samples_per_ui).astype(np.float64)
+    width = max(1, samples_per_ui // 8)  # smooth over noise in sparse histograms
+    smooth = np.convolve(np.tile(hist, 3), np.ones(width) / width, "same")[
+        samples_per_ui : 2 * samples_per_ui
+    ]
+    rare = np.isclose(smooth, smooth.min())
+
+    # Longest circular run of `rare` phases, and its midpoint.
+    best_len, best_mid = 0, 0.0
+    for begin in range(samples_per_ui):
+        if not rare[begin] or rare[begin - 1] and not rare.all():
+            continue
+        length = 0
+        while length < samples_per_ui and rare[(begin + length) % samples_per_ui]:
+            length += 1
+        if length > best_len:
+            best_len, best_mid = length, begin + (length - 1) / 2
+    return best_mid % samples_per_ui
