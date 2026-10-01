@@ -1,5 +1,5 @@
 """Regenerate the report's figures into figures/ from the same code as
-examples/plot_tx_ffe_adaptation_s4p.py.
+examples/plot_tx_ffe_adaptation_s4p.py and plot_tx_ffe_dfe_adaptation_s4p.py.
 
 Run: python docs/tx_ffe_adaptation/make_figures.py
 """
@@ -19,10 +19,17 @@ HERE = Path(__file__).parent
 REPO = HERE.parents[1]
 OUT = HERE / "figures"
 
-spec = importlib.util.spec_from_file_location("example", REPO / "examples/plot_tx_ffe_adaptation_s4p.py")
-assert spec and spec.loader
-ex = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(ex)
+
+def _load_example(name: str):  # type: ignore[no-untyped-def]
+    spec = importlib.util.spec_from_file_location(name, REPO / "examples" / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ex = _load_example("plot_tx_ffe_adaptation_s4p")
+ex_dfe = _load_example("plot_tx_ffe_dfe_adaptation_s4p")
 
 plt.rcParams.update({"font.size": 9, "figure.dpi": 150})
 
@@ -96,6 +103,72 @@ def main() -> None:
         isi = np.abs(np.delete(cursors, c)).sum()
         print(f"{name}: main {cursors[c]:.3f}, sum|ISI| {isi:.3f}, PDA eye {2 * (cursors[c] - isi):+.3f}")
     print("taps:", taps.round(3), " dLev:", round(float(trace.dlev[-500:].mean()), 3))
+
+    dfe_figures(channel)
+
+
+def dfe_figures(s4p: SParameterChannel) -> None:
+    """TX FFE + 1-tap DFE, against the TX FFE alone."""
+    channel = SampledPulseChannel.from_waveform(
+        s4p, ex_dfe.SYMBOL_RATE, ex_dfe.SAMPLES_PER_UI, ex_dfe.N_PRE, ex_dfe.N_POST
+    )
+    a = channel.cursors
+    runs = {}
+    for n_dfe in (0, ex_dfe.N_DFE):
+        trace = ex_dfe.adapt(channel, n_dfe)
+        runs[n_dfe] = (trace, trace.tap_weights[-500:].mean(axis=0), trace.dfe_taps[-500:].mean(axis=0))
+    trace, taps, alpha = runs[ex_dfe.N_DFE]
+    p, eq, i0 = ex_dfe.residual(a, taps, alpha)
+
+    fig, (ax_w, ax_rx) = plt.subplots(2, 1, figsize=(3.4, 3.6), sharex=True)
+    for col, name in enumerate(["$w_{-1}$", "$w_0$", "$w_1$", "$w_2$"]):
+        ax_w.plot(trace.tap_weights[:, col], label=name, lw=0.9)
+    ax_w.set_ylabel("TX tap weight")
+    ax_w.set_ylim(-0.4, 1.3)
+    ax_w.legend(ncol=4, fontsize=7, loc="upper right")
+    ax_w.grid(True)
+    ax_rx.plot(trace.dfe_taps[:, 0], label=r"DFE $\alpha_1$", lw=0.9)
+    ax_rx.plot(trace.dlev, label="dLev", lw=0.9)
+    ax_rx.set_ylabel("V")
+    ax_rx.set_xlabel("iteration (512 symbols each)")
+    ax_rx.legend(fontsize=7)
+    ax_rx.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "dfe_convergence.pdf")
+
+    ui = np.arange(-ex_dfe.N_PRE, 11)
+    window = slice(i0 - ex_dfe.N_PRE, i0 - ex_dfe.N_PRE + len(ui))
+    fig, ax = plt.subplots(figsize=(3.4, 2.4))
+    ax.stem(ui - 0.15, a[: len(ui)], linefmt="C7-", markerfmt="C7o", basefmt=" ", label="unequalized")
+    ax.stem(ui, p[window], linefmt="C0-", markerfmt="C0o", basefmt=" ", label="after TX FFE")
+    ax.stem(ui + 0.15, eq[window], linefmt="C3-", markerfmt="C3o", basefmt=" ", label="after TX FFE + DFE")
+    ax.axhline(0, color="k", lw=0.5)
+    ax.set_xlabel("UI from main cursor")
+    ax.set_ylabel("pulse response (V)")
+    ax.legend(fontsize=7)
+    ax.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "dfe_pulse.pdf")
+
+    bits = np.random.default_rng(1).choice(np.array([-1.0, 1.0]), size=ex_dfe.N_EYE_SYMBOLS)
+    no_eq = np.zeros(len(taps))
+    no_eq[ex_dfe.TX_PRE] = 1.0
+    fig, axes = plt.subplots(1, 3, figsize=(10, 2.6))
+    for ax, (title, eye_taps, eye_alpha) in zip(axes, [
+        ("Unequalized", no_eq, np.zeros(0)),
+        ("TX FFE only", runs[0][1], np.zeros(0)),
+        ("TX FFE + 1-tap DFE", taps, alpha),
+    ], strict=True):
+        plot_eye(ex_dfe.waveform_eye(s4p, eye_taps, eye_alpha, bits), ax=ax, title=title)
+        ax.set_ylabel("Amplitude (V)")
+    fig.tight_layout()
+    fig.savefig(OUT / "dfe_eyes.png", dpi=200)
+
+    for n_dfe, (_, w, al) in runs.items():
+        _, res, c = ex_dfe.residual(a, w, al)
+        isi = np.abs(np.delete(res, c)).sum()
+        print(f"DFE={n_dfe}: taps {w.round(3)} alpha {al.round(3)} main {res[c]:.3f} "
+              f"sum|ISI| {isi:.3f} PDA eye {2 * (res[c] - isi):+.3f}")
 
 
 if __name__ == "__main__":
