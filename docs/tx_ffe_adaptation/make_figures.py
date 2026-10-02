@@ -1,5 +1,6 @@
 """Regenerate the report's figures into figures/ from the same code as
-examples/plot_tx_ffe_adaptation_s4p.py and plot_tx_ffe_dfe_adaptation_s4p.py.
+examples/plot_tx_ffe_adaptation_s4p.py, plot_tx_ffe_dfe_adaptation_s4p.py and
+plot_mueller_muller_s4p.py.
 
 Run: python docs/tx_ffe_adaptation/make_figures.py
 """
@@ -12,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from serdeskit.adapt import SampledPulseChannel, SignSignLms, SymbolRateLink, TxFfe
+from serdeskit.cdr import PulseChannel
 from serdeskit.channel import SParameterChannel
 from serdeskit.util import plot_eye
 
@@ -30,6 +32,7 @@ def _load_example(name: str):  # type: ignore[no-untyped-def]
 
 ex = _load_example("plot_tx_ffe_adaptation_s4p")
 ex_dfe = _load_example("plot_tx_ffe_dfe_adaptation_s4p")
+ex_mm = _load_example("plot_mueller_muller_s4p")
 
 plt.rcParams.update({"font.size": 9, "figure.dpi": 150})
 
@@ -105,6 +108,7 @@ def main() -> None:
     print("taps:", taps.round(3), " dLev:", round(float(trace.dlev[-500:].mean()), 3))
 
     dfe_figures(channel)
+    mm_figures(channel)
 
 
 def dfe_figures(s4p: SParameterChannel) -> None:
@@ -169,6 +173,53 @@ def dfe_figures(s4p: SParameterChannel) -> None:
         isi = np.abs(np.delete(res, c)).sum()
         print(f"DFE={n_dfe}: taps {w.round(3)} alpha {al.round(3)} main {res[c]:.3f} "
               f"sum|ISI| {isi:.3f} PDA eye {2 * (res[c] - isi):+.3f}")
+
+
+def mm_figures(s4p: SParameterChannel) -> None:
+    """Linear Mueller-Muller on the unequalized channel, known data."""
+    pulse = PulseChannel.from_waveform(s4p, ex_mm.SYMBOL_RATE, ex_mm.SAMPLES_PER_UI)
+    grid = np.linspace(-0.75, 0.75, 301)
+    detector, root = ex_mm.detector_curve(pulse, grid)
+    rng = np.random.default_rng(0)
+    runs = {start: ex_mm.track(pulse, start, rng) for start in ex_mm.STARTS}
+
+    fig, (ax_pd, ax_ph) = plt.subplots(2, 1, figsize=(3.4, 3.6))
+    ax_pd.plot(grid, detector, lw=0.9)
+    ax_pd.axhline(0, color="k", lw=0.5)
+    ax_pd.axvline(root, color="C3", ls="--", lw=0.9)
+    ax_pd.set_xlabel("sampling phase (UI from pulse peak)")
+    ax_pd.set_ylabel("$h_1 - h_{-1}$ (V)")
+    ax_pd.grid(True)
+    for start, phases in runs.items():
+        ax_ph.plot(phases, lw=0.9, label=f"start {start:+.1f} UI")
+    ax_ph.axhline(root, color="C3", ls="--", lw=0.9)
+    ax_ph.set_xlabel(f"iteration ({ex_mm.BLOCK} symbols each)")
+    ax_ph.set_ylabel("phase (UI)")
+    ax_ph.set_xlim(0, 60)
+    ax_ph.legend(fontsize=7)
+    ax_ph.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "mm_loop.pdf")
+
+    t = (np.arange(len(pulse.samples)) - pulse.peak) / ex_mm.SAMPLES_PER_UI
+    ui = np.arange(-2, 6)
+    fig, ax = plt.subplots(figsize=(3.4, 2.4))
+    ax.plot(t, pulse.samples, color="C7", lw=0.9)
+    ax.plot(ui, pulse.cursors(0.0, 2, 5), "o", ms=4, color="C0", label="pulse peak")
+    ax.plot(root + ui, pulse.cursors(root, 2, 5), "o", ms=4, color="C3", label="MM lock")
+    ax.set_xlim(-3, 6)
+    ax.set_xlabel("time (UI from pulse peak)")
+    ax.set_ylabel("pulse response (V)")
+    ax.legend(fontsize=7)
+    ax.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "mm_pulse.pdf")
+
+    for start, phases in runs.items():
+        locked = phases[-100:]
+        print(f"MM start {start:+.2f}: locked {locked.mean():+.3f} UI, rms {locked.std():.4f}")
+    print(f"MM root {root:+.3f} UI, cursors there {pulse.cursors(root, 1, 1).round(3)}, "
+          f"at the peak {pulse.cursors(0.0, 1, 1).round(3)}")
 
 
 if __name__ == "__main__":

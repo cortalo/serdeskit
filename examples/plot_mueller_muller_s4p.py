@@ -13,6 +13,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 
 from serdeskit.cdr import MuellerMuller, PulseChannel, SamplingPhaseLink
 from serdeskit.channel import SParameterChannel
@@ -27,21 +28,31 @@ N_ITERATIONS = 200
 STARTS = (-0.5, 0.6)
 
 
+def detector_curve(
+    pulse: PulseChannel, grid: npt.NDArray[np.float64]
+) -> tuple[npt.NDArray[np.float64], float]:
+    """h_1 - h_-1 over the sampling phases in `grid`, and where it crosses 0."""
+    cursors = np.array([pulse.cursors(ph, 1, 1) for ph in grid])  # h_-1, h_0, h_1
+    detector = cursors[:, 2] - cursors[:, 0]
+    return detector, float(grid[np.flatnonzero(np.diff(np.sign(detector)))[0]])
+
+
+def track(pulse: PulseChannel, start: float, rng: np.random.Generator) -> npt.NDArray[np.float64]:
+    """Sampling phase per iteration, starting at `start` UI."""
+    link = SamplingPhaseLink(pulse, N_PRE, N_POST, phase=start)
+    data = rng.choice(np.array([-1.0, 1.0]), size=(N_ITERATIONS, BLOCK))
+    return MuellerMuller(gain=GAIN).run(link, data)
+
+
 def main() -> None:
     channel = SParameterChannel.from_touchstone(str(TOUCHSTONE_PATH), port_order=(0, 2, 1, 3))
     pulse = PulseChannel.from_waveform(channel, SYMBOL_RATE, SAMPLES_PER_UI)
 
     grid = np.linspace(-0.75, 0.75, 301)
-    cursors = np.array([pulse.cursors(ph, 1, 1) for ph in grid])  # h_-1, h_0, h_1
-    detector = cursors[:, 2] - cursors[:, 0]
-    root = grid[np.flatnonzero(np.diff(np.sign(detector)))[0]]
+    detector, root = detector_curve(pulse, grid)
 
     rng = np.random.default_rng(0)
-    runs = {}
-    for start in STARTS:
-        link = SamplingPhaseLink(pulse, N_PRE, N_POST, phase=start)
-        data = rng.choice(np.array([-1.0, 1.0]), size=(N_ITERATIONS, BLOCK))
-        runs[start] = MuellerMuller(gain=GAIN).run(link, data)
+    runs = {start: track(pulse, start, rng) for start in STARTS}
 
     for start, phases in runs.items():
         locked = phases[-100:]

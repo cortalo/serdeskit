@@ -239,4 +239,63 @@ it takes the largest post-cursor without spending swing, so the main tap returns
 The TX still has to cancel the pre-cursor (its pre-tap grows to $-0.28$) and now also post2.
 In a sweep, more DFE taps saturate near $+0.12$\,V.
 
+\clearpage
+\section*{Baud-Rate Timing Recovery (Mueller-M\"uller)}
+So far the RX sampled exactly at the pulse peak, i.e.\ an ideal CDR. Mueller and M\"uller
+(IEEE Trans.\ Commun.\ 1976) recover the sampling phase from one sample per UI, the same samples
+the adaptation already uses, instead of extra edge samplers at the zero crossings. Their type-A
+loop locks where the pulse's first pre- and post-cursors are equal, $h_{-1} = h_1$.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[blk] (ch) at (0,0) {Channel};
+  \node[blk] (smp) at (2.6,0) {Sampler};
+  \node[blk] (pd) at (6.4,0) {MM phase detector\\[-2pt]\scriptsize $z = r[n]d[n{-}1] - r[n{-}1]d[n]$};
+  \node[blk] (acc) at (10.4,0) {Accumulator\\[-2pt]\scriptsize $\tau \leftarrow \tau + g\,\overline{z}$};
+  \draw[->] (-1.4,0) node[left, font=\small] {$d[n]$} -- (ch);
+  \draw[->] (ch) -- (smp);
+  \draw[->] (smp) -- node[above, font=\small] {$r[n]$} (pd);
+  \draw[->] (pd) -- (acc);
+  \fill (-1.0,0) circle (1.2pt);
+  \draw[->] (-1.0,0) |- (6.4,1.0) node[pos=0.75, above, font=\scriptsize] {$d[n]$, known at the RX} -- (pd.north);
+  \draw[->] (acc.south) |- (2.6,-1.1) node[pos=0.75, below, font=\scriptsize] {sampling phase $\tau$} -- (smp.south);
+\end{tikzpicture}
+\caption{Timing loop as simulated: no equalization, known data, linear (not sign) detector.}
+\end{figure}
+
+\noindent\textbf{Estimating $h_{\pm1}$ from data.} With random data the cursors are never seen
+alone: at phase $\tau$, $r[n] = \sum_k h_k\, d[n-k]$ with $h_k = p(\tau + kT)$. For independent
+$\pm1$ symbols $E\{d[i]\,d[j]\} = \delta_{ij}$, so correlating with a neighbouring symbol picks out
+one cursor:
+\[
+  E\{r[n]\,d[n-1]\} = h_1, \qquad E\{r[n-1]\,d[n]\} = h_{-1},
+  \qquad E\{z[n]\} = h_1 - h_{-1}.
+\]
+$h_1 > h_{-1}$ means sampling early, so the phase moves later by $g$ times $z$ averaged over a block.
+$h_0$ cancels in $z$, so at lock the estimate carries only residual ISI and noise, and it is the
+same correlation as the sign-sign LMS votes for TX taps $\pm1$.
+
+\noindent\textbf{Simulation.} The channel keeps its whole pulse response (64 samples/UI) and the
+cursors are interpolated at the current $\tau$; a phase change only affects samples taken
+afterwards. Unequalized T20 channel, transmitted symbols as $d$, blocks of 1000 symbols, $g = 0.5$\,UI/V.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.36\linewidth]{figures/mm_loop.pdf}\hspace{4mm}
+\includegraphics[width=0.36\linewidth]{figures/mm_pulse.pdf}
+\caption{Left: detector characteristic $h_1 - h_{-1}$ (single zero at $+0.105$\,UI) and the
+loop locking there from either side within $\sim$20 blocks. Right: UI-spaced samples at the
+pulse peak and at the MM lock point.}
+\end{figure}
+
+\noindent\textbf{Takeaways.}
+\begin{itemize}\itemsep0pt
+  \item The loop locks at $+0.106$\,UI (rms 0.002, last 100 blocks), where
+        $h_{-1} = h_1 = 0.172$\,V: after the peak, because the pulse decays more slowly than it
+        rises. That costs only 1\% of $h_0$ (0.316\,V vs.\ 0.319\,V at the peak).
+  \item It converges with the eye fully closed: the estimate needs only independent data, not
+        correct decisions. With its own decisions (14\% wrong here) the correlation would be biased.
+\end{itemize}
+
 \end{document}
