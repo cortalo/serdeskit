@@ -14,6 +14,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 
 from serdeskit.cdr import PulseChannel, SamplingPhaseLink, SignSignMuellerMuller, TimingTrace
 from serdeskit.channel import SParameterChannel
@@ -36,6 +37,27 @@ def track(pulse: PulseChannel, start: float, rng: np.random.Generator) -> Timing
     data = rng.choice(np.array([-1.0, 1.0]), size=(N_ITERATIONS, BLOCK))
     loop = SignSignMuellerMuller(STEP_PHASE, STEP_DLEV, noise_rms=NOISE_RMS, rng=rng)
     return loop.run(link, data)
+
+
+def detector_curve(
+    pulse: PulseChannel,
+    grid: npt.NDArray[np.float64],
+    dlev: float,
+    rng: np.random.Generator,
+    n_symbols: int = 100_000,
+) -> npt.NDArray[np.float64]:
+    """Mean sign-sign phase vote d[n]d[n-1](ERR[n] - ERR[n-1]) per symbol, at
+    each phase in `grid`, for a fixed dLev.
+    """
+    d = rng.choice(np.array([-1.0, 1.0]), size=n_symbols)
+    votes = []
+    for phase in grid:
+        rx = SamplingPhaseLink(pulse, N_PRE, N_POST, phase=phase).respond(d)
+        r = rx.r + rng.normal(0.0, NOISE_RMS, n_symbols)
+        err = np.where(r * rx.d > dlev, 1.0, -1.0)
+        vote = rx.d[1:] * rx.d[:-1] * (err[1:] - err[:-1])
+        votes.append(vote[N_POST:].mean())  # skip the idle-line start
+    return np.array(votes)
 
 
 def main() -> None:

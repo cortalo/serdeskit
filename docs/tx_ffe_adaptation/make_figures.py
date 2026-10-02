@@ -1,6 +1,6 @@
 """Regenerate the report's figures into figures/ from the same code as
-examples/plot_tx_ffe_adaptation_s4p.py, plot_tx_ffe_dfe_adaptation_s4p.py and
-plot_mueller_muller_s4p.py.
+examples/plot_tx_ffe_adaptation_s4p.py, plot_tx_ffe_dfe_adaptation_s4p.py,
+plot_mueller_muller_s4p.py and plot_sign_sign_mueller_muller_s4p.py.
 
 Run: python docs/tx_ffe_adaptation/make_figures.py
 """
@@ -33,6 +33,7 @@ def _load_example(name: str):  # type: ignore[no-untyped-def]
 ex = _load_example("plot_tx_ffe_adaptation_s4p")
 ex_dfe = _load_example("plot_tx_ffe_dfe_adaptation_s4p")
 ex_mm = _load_example("plot_mueller_muller_s4p")
+ex_ssmm = _load_example("plot_sign_sign_mueller_muller_s4p")
 
 plt.rcParams.update({"font.size": 9, "figure.dpi": 150})
 
@@ -109,6 +110,7 @@ def main() -> None:
 
     dfe_figures(channel)
     mm_figures(channel)
+    ssmm_figures(channel)
 
 
 def dfe_figures(s4p: SParameterChannel) -> None:
@@ -220,6 +222,43 @@ def mm_figures(s4p: SParameterChannel) -> None:
         print(f"MM start {start:+.2f}: locked {locked.mean():+.3f} UI, rms {locked.std():.4f}")
     print(f"MM root {root:+.3f} UI, cursors there {pulse.cursors(root, 1, 1).round(3)}, "
           f"at the peak {pulse.cursors(0.0, 1, 1).round(3)}")
+
+
+def ssmm_figures(s4p: SParameterChannel) -> None:
+    """Sign-sign Mueller-Muller with its dLev loop, known data."""
+    pulse = PulseChannel.from_waveform(s4p, ex_ssmm.SYMBOL_RATE, ex_ssmm.SAMPLES_PER_UI)
+    rng = np.random.default_rng(0)
+    runs = {start: ex_ssmm.track(pulse, start, rng) for start in ex_ssmm.STARTS}
+
+    fig, (ax_ph, ax_d) = plt.subplots(2, 1, figsize=(3.4, 3.6), sharex=True)
+    for start, trace in runs.items():
+        ax_ph.plot(trace.phase, lw=0.9, label=f"start {start:+.1f} UI")
+        ax_d.plot(trace.dlev, lw=0.9)
+    ax_ph.set_ylabel("phase (UI)")
+    ax_ph.legend(fontsize=7)
+    ax_ph.grid(True)
+    ax_d.set_ylabel("dLev (V)")
+    ax_d.set_xlabel(f"iteration ({ex_ssmm.BLOCK} symbols each)")
+    ax_d.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "ssmm_loop.pdf")
+
+    grid = np.linspace(-0.5, 0.6, 45)
+    fig, ax = plt.subplots(figsize=(3.4, 2.4))
+    for dlev in (0.1, 0.2, 0.316, 0.45):
+        ax.plot(grid, ex_ssmm.detector_curve(pulse, grid, dlev, rng), lw=0.9,
+                label=f"dLev {dlev:.2f} V")
+    ax.axhline(0, color="k", lw=0.5)
+    ax.set_xlabel("sampling phase (UI from pulse peak)")
+    ax.set_ylabel("mean phase vote")
+    ax.legend(fontsize=7)
+    ax.grid(True)
+    fig.tight_layout()
+    fig.savefig(OUT / "ssmm_detector.pdf")
+
+    for start, trace in runs.items():
+        print(f"SS-MM start {start:+.2f}: phase {trace.phase[-200:].mean():+.3f} UI "
+              f"(rms {trace.phase[-200:].std():.3f}), dLev {trace.dlev[-200:].mean():.3f} V")
 
 
 if __name__ == "__main__":

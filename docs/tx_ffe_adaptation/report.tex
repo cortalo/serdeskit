@@ -298,4 +298,75 @@ pulse peak and at the MM lock point.}
         correct decisions. With its own decisions (14\% wrong here) the correlation would be biased.
 \end{itemize}
 
+\clearpage
+\section*{Sign-Sign Mueller-M\"uller with a dLev Loop}
+Without an ADC the RX has only comparators. Slicing $r$ at 0 loses everything,
+$d[n]d[n-1] - d[n-1]d[n] = 0$. Subtracting the main cursor first keeps it: with
+$e[n] = r[n] - h_0 d[n]$ the $h_0$ terms cancel exactly,
+$r[n]d[n-1] - r[n-1]d[n] = e[n]d[n-1] - e[n-1]d[n]$. Two error samplers at $\pm$dLev and an XOR
+(Spagna, ISSCC 2010) give, for correct decisions and dLev in place of $h_0$,
+\begin{gather*}
+  \mathrm{ERR}[n] = \mathrm{sign}\big(|r[n]| - \mathrm{dLev}\big) = d[n]\,\mathrm{sign}(e[n]),\\
+  \mathrm{sign}(e[n])\,d[n-1] - \mathrm{sign}(e[n-1])\,d[n] = d[n]d[n-1]\big(\mathrm{ERR}[n] - \mathrm{ERR}[n-1]\big),
+\end{gather*}
+so only consecutive ERRs that differ vote. The same ERRs drive dLev, one step per block:
+\[
+  \tau \leftarrow \tau + \Delta_\tau\,\mathrm{sign}\Big(\textstyle\sum_n d[n]d[n-1]\big(\mathrm{ERR}[n]-\mathrm{ERR}[n-1]\big)\Big),
+  \qquad
+  \mathrm{dLev} \leftarrow \mathrm{dLev} + \Delta_{\mathrm{dLev}}\,\mathrm{sign}\Big(\textstyle\sum_n \mathrm{ERR}[n]\Big).
+\]
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \node[blk] (cp) at (2.2,0.55) {Comparator $+$dLev};
+  \node[blk] (cm) at (2.2,-0.55) {Comparator $-$dLev};
+  \node[blk] (ds) at (2.2,-1.5) {Data sampler, 0};
+  \node[blk, minimum width=9mm] (xor) at (4.7,0) {XOR};
+  \node[blk] (lg) at (8.3,0) {Adaptation logic\\[-2pt]\scriptsize phase and dLev votes};
+  \node[blk] (dac) at (4.7,1.35) {dLev DAC};
+  \draw (-0.4,0) node[left, font=\small] {$r[n]$} -- (0.4,0);
+  \draw[->] (0.4,0) |- (cp.west);
+  \draw[->] (0.4,0) |- (cm.west);
+  \draw[->] (0.4,0) |- (ds.west);
+  \draw[->] (cp.east) -- (xor.north west);
+  \draw[->] (cm.east) -- (xor.south west);
+  \draw[->] (xor) -- node[above, font=\scriptsize] {$\mathrm{ERR}[n]$} (lg);
+  \draw[->] (ds.east) -| node[pos=0.25, below, font=\scriptsize] {$d[n]$} (lg.south);
+  \draw[->] (lg.north) |- (dac.east);
+  \draw[->] (dac.west) -| node[pos=0.25, above, font=\scriptsize] {$\pm$dLev} (cp.north);
+  \draw[->] (lg.east) -- (10.6,0) node[right, font=\scriptsize, align=left] {phase\\up/down};
+\end{tikzpicture}
+\caption{Comparator-only receiver as in Spagna (ISSCC 2010); the DAC sets both error thresholds.
+In the simulation the transmitted $d[n]$ selects the error sampler at $d[n]\cdot$dLev, which equals
+the XOR form for correct decisions.}
+\end{figure}
+
+\noindent\textbf{The lock point does not depend on dLev.} With $\delta = h_0 - \mathrm{dLev}$ and
+$R$ the ISI from $|k|\ge2$,
+$E\{\mathrm{sign}(e[n])\,d[n-1]\} = G(h_1, h_{-1})$ and $E\{\mathrm{sign}(e[n-1])\,d[n]\} = G(h_{-1}, h_1)$,
+where $G(a,b) = E\{\mathrm{sign}(\delta x + a y + b w + R)\,y\}$ for independent $\pm1$ symbols
+$x, y, w$ ($R$ has the same distribution in both). At $h_1 = h_{-1}$ the two are equal for any
+$\delta$, so dLev sets only the detector's gain. dLev itself settles at the median of
+$r[n]d[n]$, which is $h_0$ because the ISI is symmetric about 0.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.36\linewidth]{figures/ssmm_detector.pdf}\hspace{4mm}
+\includegraphics[width=0.27\linewidth]{figures/ssmm_loop.pdf}
+\caption{T20, unequalized, known data, 5\,mV rms comparator noise. Left: mean phase vote at fixed
+dLev; every dLev crosses zero at the same phase, only the slope changes. Right: the loops from
+dLev $= 0$, blocks of 512 symbols, $\Delta_\tau = 1/128$\,UI, $\Delta_{\mathrm{dLev}} = 2$\,mV;
+the phase locks before dLev arrives.}
+\end{figure}
+
+\noindent\textbf{Takeaways.}
+\begin{itemize}\itemsep0pt
+  \item The phase locks at $+0.107$\,UI, as the linear loop does ($+0.105$\,UI), in $\sim$80 blocks
+        while dLev is still below half of $h_0$; dLev then settles at 0.316\,V, the $h_0$ there.
+        The loops do not fight: dLev only scales the detector gain.
+  \item Sign-sign dithers around the lock (rms 0.01\,UI vs.\ 0.002 linear). With few discrete ISI
+        values and dLev near $h_0$ the gain can vanish; T20's long tail smooths the ISI.
+\end{itemize}
+
 \end{document}
