@@ -56,11 +56,13 @@ class SignSignMuellerMuller:
         for block in data:
             rx = link.respond(block)
 
-            # Known d picks the error sampler at d[n] * dLev.
-            err = np.empty(len(rx.d))
+            # Known d picks the error sampler at d[n] * dLev. d = 0 (idle line,
+            # or data not yet recovered) gives no error sample.
+            err = np.zeros(len(rx.d))
             for n in range(len(rx.d)):
-                r = rx.r[n] + self.rng.normal(0.0, self.noise_rms)
-                err[n] = 1.0 if r * rx.d[n] > dlev[-1] else -1.0
+                if rx.d[n] != 0:
+                    r = rx.r[n] + self.rng.normal(0.0, self.noise_rms)
+                    err[n] = 1.0 if r * rx.d[n] > dlev[-1] else -1.0
 
             phase_vote = 0.0
             for n in range(1, len(rx.d)):
