@@ -17,7 +17,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from serdeskit.cdr import PulseChannel, RecoveredDataLink, SamplingPhaseLink, SignSignMuellerMuller
+from serdeskit.cdr import (
+    PulseChannel,
+    RecoveredDataLink,
+    SamplingPhaseLink,
+    SignSignMuellerMuller,
+    TimingTrace,
+)
 from serdeskit.channel import SParameterChannel
 from serdeskit.prbs import Prbs, PrbsSync
 
@@ -31,16 +37,20 @@ BLOCK, N_ITERATIONS = 64, 300
 STEP_PHASE, STEP_DLEV = 1 / 256, 2e-3
 
 
-def main() -> None:
-    channel = SParameterChannel.from_touchstone(str(TOUCHSTONE_PATH), port_order=(0, 2, 1, 3))
-    pulse = PulseChannel.from_waveform(channel, SYMBOL_RATE, SAMPLES_PER_UI)
-
+def simulate(pulse: PulseChannel) -> tuple[TimingTrace, PrbsSync]:
+    """The CDR's phase/dLev trace, and the sync (locked_at, attempts)."""
     prbs = Prbs(ORDER)
     sync = PrbsSync(prbs)
     link = RecoveredDataLink(SamplingPhaseLink(pulse, N_PRE, N_POST, phase=START_PHASE), sync)
     data = prbs.symbols(N_ITERATIONS * BLOCK, start=12345).reshape(N_ITERATIONS, BLOCK)
     loop = SignSignMuellerMuller(STEP_PHASE, STEP_DLEV, noise_rms=5e-3, rng=np.random.default_rng(0))
-    trace = loop.run(link, data)
+    return loop.run(link, data), sync
+
+
+def main() -> None:
+    channel = SParameterChannel.from_touchstone(str(TOUCHSTONE_PATH), port_order=(0, 2, 1, 3))
+    pulse = PulseChannel.from_waveform(channel, SYMBOL_RATE, SAMPLES_PER_UI)
+    trace, sync = simulate(pulse)
 
     assert sync.locked_at is not None
     final = trace.phase[-100:].mean()

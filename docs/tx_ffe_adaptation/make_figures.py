@@ -1,6 +1,7 @@
 """Regenerate the report's figures into figures/ from the same code as
 examples/plot_tx_ffe_adaptation_s4p.py, plot_tx_ffe_dfe_adaptation_s4p.py,
-plot_mueller_muller_s4p.py and plot_sign_sign_mueller_muller_s4p.py.
+plot_mueller_muller_s4p.py, plot_sign_sign_mueller_muller_s4p.py and
+plot_prbs_sync_s4p.py.
 
 Run: python docs/tx_ffe_adaptation/make_figures.py
 """
@@ -34,6 +35,7 @@ ex = _load_example("plot_tx_ffe_adaptation_s4p")
 ex_dfe = _load_example("plot_tx_ffe_dfe_adaptation_s4p")
 ex_mm = _load_example("plot_mueller_muller_s4p")
 ex_ssmm = _load_example("plot_sign_sign_mueller_muller_s4p")
+ex_prbs = _load_example("plot_prbs_sync_s4p")
 
 plt.rcParams.update({"font.size": 9, "figure.dpi": 150})
 
@@ -111,6 +113,7 @@ def main() -> None:
     dfe_figures(channel)
     mm_figures(channel)
     ssmm_figures(channel)
+    prbs_figures(channel)
 
 
 def dfe_figures(s4p: SParameterChannel) -> None:
@@ -259,6 +262,30 @@ def ssmm_figures(s4p: SParameterChannel) -> None:
     for start, trace in runs.items():
         print(f"SS-MM start {start:+.2f}: phase {trace.phase[-200:].mean():+.3f} UI "
               f"(rms {trace.phase[-200:].std():.3f}), dLev {trace.dlev[-200:].mean():.3f} V")
+
+
+def prbs_figures(s4p: SParameterChannel) -> None:
+    """SS-MM CDR on data recovered by a PRBS15 sync, from the worst phase."""
+    pulse = PulseChannel.from_waveform(s4p, ex_prbs.SYMBOL_RATE, ex_prbs.SAMPLES_PER_UI)
+    trace, sync = ex_prbs.simulate(pulse)
+    bits = np.arange(len(trace.phase)) * ex_prbs.BLOCK
+
+    fig, (ax_ph, ax_d) = plt.subplots(2, 1, figsize=(5.2, 3.6), sharex=True)
+    ax_ph.plot(bits, trace.phase, lw=0.9)
+    ax_ph.axhline(0.106 - 1, color="gray", ls="--", lw=0.8)
+    ax_ph.set_ylabel("phase (UI)")
+    ax_d.plot(bits, trace.dlev, lw=0.9, color="C1")
+    ax_d.set_ylabel("dLev (V)")
+    ax_d.set_xlabel("received bits")
+    for ax in (ax_ph, ax_d):
+        ax.axvline(sync.locked_at, color="k", ls=":", lw=0.8)
+        ax.grid(True)
+    ax_ph.annotate(f"PRBS15 locked\n({sync.locked_at} bits)", (sync.locked_at, -0.8),
+                   xytext=(4, 0), textcoords="offset points", fontsize=7, va="center")
+    fig.tight_layout()
+    fig.savefig(OUT / "prbs_cdr.pdf")
+    print(f"PRBS sync: locked after {sync.locked_at} bits, phase {trace.phase[-100:].mean():+.3f} UI, "
+          f"dLev {trace.dlev[-100:].mean():.3f} V")
 
 
 if __name__ == "__main__":

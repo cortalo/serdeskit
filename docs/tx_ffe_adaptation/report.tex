@@ -369,4 +369,53 @@ the phase locks before dLev arrives.}
         values and dLev near $h_0$ the gain can vanish; T20's long tail smooths the ISI.
 \end{itemize}
 
+\clearpage
+\section*{Recovering the Training Data: PRBS Sync}
+Every loop so far was given the transmitted $d[n]$. That is how link training works (the TX sends
+a known PRBS), but the RX still has to find where in the PRBS each sample is. A PRBS comes from a
+two-tap LFSR, $b[n] = b[n-N] \oplus b[n-t]$ for PRBS$N$ (PRBS15: $t = 14$), so any $N$ consecutive
+bits determine everything after them. The RX locks onto it from its own decisions:
+\begin{itemize}\itemsep0pt
+  \item \textbf{Seed and verify.} $N$ decisions become the LFSR state; the next 256 decisions are
+        predicted from it. A right seed disagrees only where the decisions are wrong, a wrong one
+        $\sim$50\% of the time: lock if at most 30\% disagree.
+  \item \textbf{Retry one bit later.} On failure the seed slides by one bit, re-checked against
+        buffered decisions. Seeding from the latest decisions instead cycled through 6 fixed positions
+        of PRBS7 on T20 and never locked: without noise the decision errors are set by ISI and repeat
+        with the PRBS period, and none of the 33 error-free windows was ever tried.
+  \item \textbf{Free-run.} Once locked, the LFSR no longer reads the decisions: the reference is
+        error-free however closed the eye is.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\linewidth]{figures/prbs_cdr.pdf}
+\caption{T20, unequalized, starting at $-0.5$\,UI (the worst phase, 25\% decision errors). The
+SS-MM CDR and dLev hold until the PRBS15 sync locks after 702 bits, then converge on the recovered
+$d$: $-0.894$\,UI and 0.308\,V. Dashed: the known-data lock point $+0.106$\,UI, one UI over.}
+\end{figure}
+
+\noindent\textbf{Takeaways.}
+\begin{itemize}\itemsep0pt
+  \item With 14--26\% decision errors, the sync locks within 270--480 bits for PRBS7 and PRBS15 at
+        any sampling phase, and the recovered $d$ then has no errors.
+  \item The sync may label the data one bit off; the RX cannot tell and need not. Here it locks to
+        $d[n-1]$, so the CDR settles one UI earlier on the same point of the pulse: $-0.894 =
+        0.106 - 1$, with the same dLev, and the recovered $d$ equals the transmitted $d[n-1]$ exactly.
+  \item Long PRBSs can false-lock on a closed eye. A seed with one wrong bit diverges from the truth
+        only as the error propagates through the taps, $N$ bits per step:
+        \begin{center}\small
+        \begin{tabular}{lccc}
+        \toprule
+        disagreement of a one-bit-off seed & PRBS7 & PRBS15 & PRBS31 \\
+        \midrule
+        over 256 bits & 50\% & 32\% & 12\% \\
+        over 4096 bits & 50\% & 48\% & 34\% \\
+        \bottomrule
+        \end{tabular}
+        \end{center}
+        A one-bit-off PRBS31 seed passes the 30\% test, and the CDR then trains on wrong data
+        (dLev stayed near 0). Use a short PRBS, or a verification window many times $N$.
+\end{itemize}
+
 \end{document}
